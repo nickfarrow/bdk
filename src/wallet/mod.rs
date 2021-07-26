@@ -986,7 +986,7 @@ where
             // - If that also fails, it will try it on the internal descriptor, if present
             let desc = psbt
                 .get_utxo_for(n)
-                .map(|txout| self.get_descriptor_for_txout(&txout))
+                .map(|txout| self.get_descriptor_for_script_pubkey(&txout.script_pubkey))
                 .transpose()?
                 .flatten()
                 .or_else(|| {
@@ -1042,6 +1042,25 @@ where
         descriptor
     }
 
+    /// Get the descriptor for a given `script_pubkey` (if it exists in the wallet's database).
+    pub fn get_descriptor_for_script_pubkey(
+        &self,
+        script_pubkey: &Script,
+    ) -> Result<Option<DerivedDescriptor<'_>>, Error> {
+        Ok(self
+            .database
+            .borrow()
+            .get_path_from_script_pubkey(script_pubkey)?
+            .map(|(keychain, child)| (self.get_descriptor_for_keychain(keychain), child))
+            .map(|(desc, child)| desc.as_derived(child, &self.secp)))
+    }
+
+    /// Get a temporary refernce to the wallet's database to run querties against
+    pub fn query_db<R>(&self, f: impl FnOnce(&D) -> R) -> R {
+        let db = self.database.borrow();
+        f(&*db)
+    }
+
     // Internals
 
     fn _get_descriptor_for_keychain(
@@ -1055,18 +1074,6 @@ where
             ),
             _ => (&self.descriptor, KeychainKind::External),
         }
-    }
-
-    fn get_descriptor_for_txout(
-        &self,
-        txout: &TxOut,
-    ) -> Result<Option<DerivedDescriptor<'_>>, Error> {
-        Ok(self
-            .database
-            .borrow()
-            .get_path_from_script_pubkey(&txout.script_pubkey)?
-            .map(|(keychain, child)| (self.get_descriptor_for_keychain(keychain), child))
-            .map(|(desc, child)| desc.as_derived(child, &self.secp)))
     }
 
     fn get_change_address(&self) -> Result<Script, Error> {

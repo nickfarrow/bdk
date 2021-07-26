@@ -91,7 +91,7 @@ macro_rules! impl_inner_method {
             #[cfg(feature = "electrum")]
             AnyBlockchain::Electrum(inner) => inner.$name( $($args, )* ),
             #[cfg(feature = "esplora")]
-            AnyBlockchain::Esplora(inner) => inner.$name( $($args, )* ),
+            AnyBlockchain::Esplora(inner) => Blockchain::$name(inner, $($args, )* ),
             #[cfg(feature = "compact_filters")]
             AnyBlockchain::CompactFilters(inner) => inner.$name( $($args, )* ),
         }

@@ -21,7 +21,7 @@ use std::ops::Deref;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
-use bitcoin::{Transaction, Txid};
+use bitcoin::{OutPoint, Transaction, Txid};
 
 use crate::database::BatchDatabase;
 use crate::error::Error;
@@ -243,4 +243,48 @@ impl<T: Blockchain> Blockchain for Arc<T> {
     fn estimate_fee(&self, target: usize) -> Result<FeeRate, Error> {
         maybe_await!(self.deref().estimate_fee(target))
     }
+}
+
+/// Can get a UTXO
+#[maybe_async]
+pub trait UtxoExists: Blockchain {
+    /// Checks if a UTXO exists
+    fn utxo_exists(&self, outpoint: OutPoint) -> Result<bool, Error>;
+}
+
+/// A failure to broadcast a transaction.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum BroadcastError {
+    /// The transaction was rejected by the node because it was invalid.
+    #[error("transaction was not broadcast because {0}")]
+    Tx(BroadcastTxErr),
+    /// There was an error making the HTTP on the backend
+    #[error("There was a problem with the HTTP request to {url:} (status: {status:?})")]
+    Http {
+        /// HTTP status if we got a response.
+        status: Option<u16>,
+        /// path the POST request was made to
+        url: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+/// The reason the backend rejected the transaction we tried to broadcast.
+pub enum BroadcastTxErr {
+    /// The transaction failed to verify (e.g. it had an invalid signature)
+    #[error("the transaction was rejected by network rules")]
+    VerifyRejected,
+    /// The transaction was generally invalid (e.g. one of the inputs it is spending from doesn't exist)
+    #[error("there was a general error while verifying the transaction")]
+    VerifyError,
+    /// That transaction has already been confirmed.
+    #[error("the transaction has already been broadcast")]
+    AlreadyInChain,
+}
+
+/// Trait representing the capability to broadcast a transaction
+#[maybe_async]
+pub trait Broadcast: Blockchain {
+    /// Broadcasts a transaction
+    fn broadcast(&self, tx: Transaction) -> Result<(), BroadcastError>;
 }

@@ -290,6 +290,45 @@ impl UrlClient {
             .json::<HashMap<String, f64>>()
             .await?)
     }
+
+    async fn _utxo_exists(&self, outpoint: OutPoint) -> Result<bool, EsploraError> {
+        #[derive(serde::Deserialize, Debug)]
+        struct OutSpend {
+            spent: bool,
+            status: Option<Status>,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct Status {
+            confirmed: bool,
+            // not used but here for debugging
+            block_height: Option<u32>,
+            block_hash: Option<BlockHash>,
+        }
+        // see https://github.com/Blockstream/esplora/issues/316 for why we do this
+        if self
+            .client
+            .get(&format!("{}/tx/{}", self.url, outpoint.txid))
+            .send()
+            .await?
+            .status()
+            == 404
+        {
+            return Ok(false);
+        }
+        let outspend = self
+            .client
+            .get(&format!(
+                "{}/tx/{}/outspend/{}",
+                self.url, outpoint.txid, outpoint.vout
+            ))
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<OutSpend>()
+            .await?;
+
+        Ok(!outspend.spent || outspend.status.map_or(false, |status| !status.confirmed))
+    }
 }
 
 #[maybe_async]
@@ -389,6 +428,62 @@ impl ConfigurableBlockchain for EsploraBlockchain {
             config.stop_gap,
         ))
     }
+}
+
+#[maybe_async]
+impl UtxoExists for EsploraBlockchain {
+    fn utxo_exists(&self, outpoint: OutPoint) -> Result<bool, Error> {
+        Ok(await_or_block!(self.url_client._utxo_exists(outpoint))?)
+    }
+}
+
+#[maybe_async]
+impl Broadcast for EsploraBlockchain {
+    fn broadcast(&self, transaction: Transaction) -> Result<(), BroadcastError> {
+        let url = format!("{}/tx", self.url_client.url);
+
+        let res = await_or_block!(self
+            .url_client
+            .client
+            .post(&url)
+            .body(serialize(&transaction).to_hex())
+            .send())
+        .map_err(|_| BroadcastError::Http {
+            status: None,
+            url: url.clone(),
+        })?;
+
+        let http_error = BroadcastError::Http {
+            status: Some(res.status().into()),
+            url,
+        };
+
+        if res.status().is_client_error() {
+            let text = await_or_block!(res.text()).map_err(|_| http_error.clone())?;
+            match text.strip_prefix("sendrawtransaction RPC error: ") {
+                Some(text) => match serde_json::from_str::<RpcError>(&text) {
+                    Ok(rpc_error) => match rpc_error.code {
+                        -25 => Err(BroadcastError::Tx(BroadcastTxErr::VerifyError)),
+                        -26 => Err(BroadcastError::Tx(BroadcastTxErr::VerifyRejected)),
+                        -27 => Err(BroadcastError::Tx(BroadcastTxErr::AlreadyInChain)),
+                        _ => Err(http_error),
+                    },
+                    Err(_e) => Err(http_error),
+                },
+                None => Err(http_error),
+            }
+        } else if res.status().is_server_error() {
+            Err(http_error)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct RpcError {
+    code: i32,
+    message: String,
 }
 
 /// Errors that can happen during a sync with [`EsploraBlockchain`]
