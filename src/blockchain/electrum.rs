@@ -176,6 +176,30 @@ impl ConfigurableBlockchain for ElectrumBlockchain {
     }
 }
 
+impl Broadcast for ElectrumBlockchain {
+    fn broadcast(&self, tx: Transaction) -> Result<(), BroadcastError> {
+        let res = self.client.transaction_broadcast(&tx);
+        match res {
+            Err(e) => {
+                let fallback_err = BroadcastError::Other(e.to_string());
+                Err(match e {
+                    electrum_client::Error::Protocol(serde_json::Value::Object(map)) => {
+                        BroadcastError::Tx(
+                            map
+                            .get("message")
+                            .and_then(|x| x.as_str())
+                            .and_then(|text| BroadcastTxErr::from_electrum_response(text))
+                            .ok_or(fallback_err.clone())?
+                        )
+                    }
+                    _ => fallback_err,
+                })
+            }
+            Ok(_) => Ok(()),
+        }
+    }
+}
+
 #[cfg(test)]
 #[cfg(feature = "test-electrum")]
 crate::bdk_blockchain_tests! {

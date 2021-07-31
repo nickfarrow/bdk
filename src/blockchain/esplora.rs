@@ -460,30 +460,13 @@ impl Broadcast for EsploraBlockchain {
 
         if res.status().is_client_error() {
             let text = await_or_block!(res.text()).map_err(|_| http_error.clone())?;
-            match text.strip_prefix("sendrawtransaction RPC error: ") {
-                Some(text) => match serde_json::from_str::<RpcError>(&text) {
-                    Ok(rpc_error) => match rpc_error.code {
-                        -25 => Err(BroadcastError::Tx(BroadcastTxErr::VerifyError)),
-                        -26 => Err(BroadcastError::Tx(BroadcastTxErr::VerifyRejected)),
-                        -27 => Err(BroadcastError::Tx(BroadcastTxErr::AlreadyInChain)),
-                        _ => Err(http_error),
-                    },
-                    Err(_e) => Err(http_error),
-                },
-                None => Err(http_error),
-            }
+            Err(BroadcastTxError::from_electrum_response(text).unwrap_or(http_error))
         } else if res.status().is_server_error() {
             Err(http_error)
         } else {
             Ok(())
         }
     }
-}
-
-#[derive(serde::Deserialize, Debug)]
-struct RpcError {
-    code: i32,
-    message: String,
 }
 
 /// Errors that can happen during a sync with [`EsploraBlockchain`]

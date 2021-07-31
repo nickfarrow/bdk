@@ -868,7 +868,6 @@ macro_rules! bdk_blockchain_tests {
             }
 
             #[test]
-            #[serial]
             #[cfg(feature = "esplora")]
             fn test_utxo_exists() {
                 use std::str::FromStr;
@@ -902,8 +901,7 @@ macro_rules! bdk_blockchain_tests {
             }
 
             #[test]
-            #[serial]
-            #[cfg(feature = "esplora")]
+            #[cfg(any(feature = "esplora", feature = "electrum"))]
             fn test_broadcast() {
                 use crate::blockchain::Broadcast;
                 let (wallet, descriptors, mut test_client) = init_single_sig();

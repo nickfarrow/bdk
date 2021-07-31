@@ -89,7 +89,7 @@ macro_rules! impl_inner_method {
     ( $self:expr, $name:ident $(, $args:expr)* ) => {
         match $self {
             #[cfg(feature = "electrum")]
-            AnyBlockchain::Electrum(inner) => inner.$name( $($args, )* ),
+            AnyBlockchain::Electrum(inner) => Blockchain::$name(inner, $($args, )* ),
             #[cfg(feature = "esplora")]
             AnyBlockchain::Esplora(inner) => Blockchain::$name(inner, $($args, )* ),
             #[cfg(feature = "compact_filters")]

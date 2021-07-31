@@ -253,7 +253,7 @@ pub trait UtxoExists: Blockchain {
 }
 
 /// A failure to broadcast a transaction.
-#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq)]
 pub enum BroadcastError {
     /// The transaction was rejected by the node because it was invalid.
     #[error("transaction was not broadcast because {0}")]
@@ -266,6 +266,9 @@ pub enum BroadcastError {
         /// path the POST request was made to
         url: String,
     },
+    /// The electrum server returned an error while broadcasting the transaction.
+    #[error("There was an error while broadcasting the transaction electrum server {0:}")]
+    Other(String),
 }
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -280,6 +283,27 @@ pub enum BroadcastTxErr {
     /// That transaction has already been confirmed.
     #[error("the transaction has already been broadcast")]
     AlreadyInChain,
+}
+
+impl BroadcastTxErr {
+    fn from_electrum_response(text: &str) -> Option<Self> {
+        text.strip_prefix("sendrawtransaction RPC error: ")
+            .and_then(|text| match serde_json::from_str::<RpcError>(&text) {
+                Ok(rpc_error) => Some(match rpc_error.code {
+                    -25 => BroadcastTxErr::VerifyError,
+                    -26 => BroadcastTxErr::VerifyRejected,
+                    -27 => BroadcastTxErr::AlreadyInChain,
+                    _ => return None,
+                }),
+                Err(_e) => None,
+            })
+    }
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct RpcError {
+    code: i32,
+    message: String,
 }
 
 /// Trait representing the capability to broadcast a transaction
