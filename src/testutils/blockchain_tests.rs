@@ -28,7 +28,11 @@ impl TestClient {
 
         let http_enabled = cfg!(feature = "test-esplora");
 
-        let electrsd = ElectrsD::new(electrs_exe, &bitcoind, false, http_enabled).unwrap();
+        let conf = electrsd::Conf {
+            http_enabled,
+            ..Default::default()
+        };
+        let electrsd = ElectrsD::with_conf(electrs_exe, &bitcoind, &conf).unwrap();
 
         let node_address = bitcoind.client.get_new_address(None, None).unwrap();
         bitcoind
@@ -56,7 +60,7 @@ impl TestClient {
         });
     }
 
-    fn wait_for_block(&mut self, min_height: usize) {
+    pub fn wait_for_block(&mut self, min_height: usize) {
         self.electrsd.client.block_headers_subscribe().unwrap();
 
         loop {
@@ -924,19 +928,19 @@ macro_rules! bdk_blockchain_tests {
                 {
                     let mut tx = tx.clone();
                     tx.input[0].previous_output = OutPoint { txid: tx.txid(), vout: 0 };
-                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxErr::VerifyError)));
+                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyError)));
                 }
                 {
                     let mut tx = tx.clone();
                     // hose the signature
                     tx.input[0].witness[0][0] += 42;
-                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxErr::VerifyRejected)));
+                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyRejected)));
                 }
                 {
                     let mut tx = tx.clone();
                     // hose the signature
                     tx.input[0].witness[1][0] += 42;
-                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxErr::VerifyRejected)));
+                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyRejected)));
                 }
                 Broadcast::broadcast(wallet.client(), tx.clone()).unwrap();
             }

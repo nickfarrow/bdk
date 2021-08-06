@@ -185,11 +185,10 @@ impl Broadcast for ElectrumBlockchain {
                 Err(match e {
                     electrum_client::Error::Protocol(serde_json::Value::Object(map)) => {
                         BroadcastError::Tx(
-                            map
-                            .get("message")
-                            .and_then(|x| x.as_str())
-                            .and_then(|text| BroadcastTxErr::from_electrum_response(text))
-                            .ok_or(fallback_err.clone())?
+                            map.get("message")
+                                .and_then(|x| x.as_str())
+                                .and_then(|text| BroadcastTxError::from_electrum_response(text))
+                                .ok_or(fallback_err.clone())?,
                         )
                     }
                     _ => fallback_err,

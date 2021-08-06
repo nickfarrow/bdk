@@ -257,7 +257,7 @@ pub trait UtxoExists: Blockchain {
 pub enum BroadcastError {
     /// The transaction was rejected by the node because it was invalid.
     #[error("transaction was not broadcast because {0}")]
-    Tx(BroadcastTxErr),
+    Tx(BroadcastTxError),
     /// There was an error making the HTTP on the backend
     #[error("There was a problem with the HTTP request to {url:} (status: {status:?})")]
     Http {
@@ -273,7 +273,7 @@ pub enum BroadcastError {
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 /// The reason the backend rejected the transaction we tried to broadcast.
-pub enum BroadcastTxErr {
+pub enum BroadcastTxError {
     /// The transaction failed to verify (e.g. it had an invalid signature)
     #[error("the transaction was rejected by network rules")]
     VerifyRejected,
@@ -283,16 +283,34 @@ pub enum BroadcastTxErr {
     /// That transaction has already been confirmed.
     #[error("the transaction has already been broadcast")]
     AlreadyInChain,
+    /// The wallet contained an input from a coinbase transaction that wasn't matured yet.
+    #[error("premature spend of coinbase output")]
+    PrematureSpendOfCoinbase,
+    /// The transaction conflicts with one that is already in the mempool (and that one is not
+    /// replaceable).
+    #[error("the transaction conflicts with one that is already in the mempool")]
+    ConflictsWithMempool,
 }
 
-impl BroadcastTxErr {
+impl BroadcastTxError {
     fn from_electrum_response(text: &str) -> Option<Self> {
         text.strip_prefix("sendrawtransaction RPC error: ")
             .and_then(|text| match serde_json::from_str::<RpcError>(&text) {
                 Ok(rpc_error) => Some(match rpc_error.code {
-                    -25 => BroadcastTxErr::VerifyError,
-                    -26 => BroadcastTxErr::VerifyRejected,
-                    -27 => BroadcastTxErr::AlreadyInChain,
+                    -25 => BroadcastTxError::VerifyError,
+                    -26 => {
+                        if rpc_error
+                            .message
+                            .starts_with("bad-txns-premature-spend-of-coinbase")
+                        {
+                            BroadcastTxError::PrematureSpendOfCoinbase
+                        } else if rpc_error.message.starts_with("txn-mempool-conflict") {
+                            BroadcastTxError::ConflictsWithMempool
+                        } else {
+                            BroadcastTxError::VerifyRejected
+                        }
+                    }
+                    -27 => BroadcastTxError::AlreadyInChain,
                     _ => return None,
                 }),
                 Err(_e) => None,
