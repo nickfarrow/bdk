@@ -3,7 +3,6 @@ use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::sha256d;
 use bitcoin::{Address, Amount, Script, Transaction, Txid};
-pub use bitcoincore_rpc::bitcoincore_rpc_json::AddressType;
 pub use bitcoincore_rpc::{Auth, Client as RpcClient, RpcApi};
 use core::str::FromStr;
 use electrsd::bitcoind::BitcoinD;
@@ -288,14 +287,8 @@ impl TestClient {
         self.generate(num_blocks, None);
     }
 
-    pub fn get_node_address(&self, address_type: Option<AddressType>) -> Address {
-        Address::from_str(
-            &self
-                .get_new_address(None, address_type)
-                .unwrap()
-                .to_string(),
-        )
-        .unwrap()
+    pub fn get_node_address(&self) -> Address {
+        Address::from_str(&self.get_new_address(None, None).unwrap().to_string()).unwrap()
     }
 }
 
@@ -319,12 +312,14 @@ impl Default for TestClient {
             .expect(
                 "you should provide env var BITCOIND_EXE or specifiy a bitcoind version feature",
             );
+        dbg!(&bitcoind_exe);
         let electrs_exe = env::var("ELECTRS_EXE")
             .ok()
             .or(electrsd::downloaded_exe_path())
             .expect(
                 "you should provide env var ELECTRS_EXE or specifiy a electrsd version feature",
             );
+        dbg!(&electrs_exe);
         Self::new(bitcoind_exe, electrs_exe)
     }
 }
@@ -577,7 +572,7 @@ macro_rules! bdk_blockchain_tests {
             fn test_sync_after_send() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
                 println!("{}", descriptors.0);
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000 )
@@ -605,7 +600,7 @@ macro_rules! bdk_blockchain_tests {
             fn test_update_confirmation_time_after_generate() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
                 println!("{}", descriptors.0);
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 let received_txid = test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000 )
@@ -630,7 +625,7 @@ macro_rules! bdk_blockchain_tests {
             #[test]
             fn test_sync_outgoing_from_scratch() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
                 let received_txid = test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000 )
                 });
@@ -671,7 +666,7 @@ macro_rules! bdk_blockchain_tests {
             #[test]
             fn test_sync_long_change_chain() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000 )
@@ -712,7 +707,7 @@ macro_rules! bdk_blockchain_tests {
             #[test]
             fn test_sync_bump_fee_basic() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000 ) (@confirmations 1)
@@ -747,7 +742,7 @@ macro_rules! bdk_blockchain_tests {
             #[test]
             fn test_sync_bump_fee_remove_change() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000 ) (@confirmations 1)
@@ -782,7 +777,7 @@ macro_rules! bdk_blockchain_tests {
             #[test]
             fn test_sync_bump_fee_add_input_simple() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000, (@external descriptors, 1) => 25_000 ) (@confirmations 1)
@@ -815,7 +810,7 @@ macro_rules! bdk_blockchain_tests {
             #[test]
             fn test_sync_bump_fee_add_input_no_change() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000, (@external descriptors, 1) => 25_000 ) (@confirmations 1)
@@ -862,7 +857,7 @@ macro_rules! bdk_blockchain_tests {
                 #[cfg(feature = "rpc")]
                 {
                     // rpc consider coinbase only when mature (100 blocks)
-                    let node_addr = test_client.get_node_address(None);
+                    let node_addr = test_client.get_node_address();
                     test_client.generate(100, Some(node_addr));
                 }
 
@@ -910,7 +905,7 @@ macro_rules! bdk_blockchain_tests {
                 use crate::blockchain::Broadcast;
                 let (wallet, descriptors, mut test_client) = init_single_sig();
                 println!("{}", descriptors.0);
-                let node_addr = test_client.get_node_address(None);
+                let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
                     @tx ( (@external descriptors, 0) => 50_000 )

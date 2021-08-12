@@ -14,8 +14,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 bdk-macros = "^0.4"
 log = "^0.4"
-miniscript = "5.1"
-bitcoin = { version = "~0.26.2", features = ["use-serde", "base64"] }
+miniscript = "6"
+bitcoin = { version = "0.27", features = ["use-serde", "base64"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 rand = "^0.7"
@@ -23,7 +23,7 @@ thiserror = "1"
 
 # Optional dependencies
 sled = { version = "0.34", optional = true }
-electrum-client = { version = "0.7", optional = true }
+electrum-client = { version = "0.8", optional = true }
 reqwest = { version = "0.11", optional = true, features = ["json"] }
 futures = { version = "0.3", optional = true }
 async-trait = { version = "0.1", optional = true }
@@ -36,8 +36,8 @@ zeroize = { version = "<1.4.0", optional = true }
 bitcoinconsensus = { version = "0.19.0-3", optional = true }
 
 # Needed by bdk_blockchain_tests macro
-bitcoincore-rpc = { version = "0.13", optional = true }
-electrsd = { version= "0.8", features = ["trigger", "bitcoind_0_21_1"], optional = true }
+bitcoincore-rpc = { package = "core-rpc", version = "0.14", optional = true }
+electrsd = { git = "https://github.com/LLFourn/electrsd", branch = "gun", features = ["trigger", "bitcoind_0_21_1"], optional = true }
 
 # Platform-specific dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
