@@ -53,23 +53,6 @@ struct UrlClient {
     // when the target platform is wasm32.
     client: Client,
     concurrency: u8,
-    kind: EsploraKind,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-/// The kind of http api being used.
-pub enum EsploraKind {
-    /// Classic esplora
-    Esplora,
-    /// [mempool.space](mempool.space) backend
-    Mempool,
-}
-
-impl Default for EsploraKind {
-    fn default() -> Self {
-        EsploraKind::Esplora
-    }
 }
 
 /// Structure that implements the logic to sync with Esplora
@@ -99,20 +82,6 @@ impl EsploraBlockchain {
                 url: base_url.to_string(),
                 client: Client::new(),
                 concurrency: concurrency.unwrap_or(DEFAULT_CONCURRENT_REQUESTS),
-                kind: EsploraKind::Esplora,
-            },
-            stop_gap,
-        }
-    }
-
-    /// Use [mempool.space](https://mempool.space) style explora as a backend.
-    pub fn new_mempool(base_url: &str, concurrency: Option<u8>, stop_gap: usize) -> Self {
-        EsploraBlockchain {
-            url_client: UrlClient {
-                url: base_url.to_string(),
-                client: Client::new(),
-                concurrency: concurrency.unwrap_or(DEFAULT_CONCURRENT_REQUESTS),
-                kind: EsploraKind::Mempool,
             },
             stop_gap,
         }
@@ -253,25 +222,21 @@ impl UrlClient {
 
         // Add the unconfirmed transactions first
         result.extend(
-            match self.kind {
-                EsploraKind::Esplora => self.client.get(&format!(
+            self.client
+                .get(&format!(
                     "{}/scripthash/{}/txs/mempool",
                     self.url, scripthash
-                )),
-                EsploraKind::Mempool => self
-                    .client
-                    .get(&format!("{}/address/{}/txs/mempool", self.url, scripthash)),
-            }
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Vec<EsploraGetHistory>>()
-            .await?
-            .into_iter()
-            .map(|x| ElsGetHistoryRes {
-                tx_hash: x.txid,
-                height: x.status.block_height.unwrap_or(0) as i32,
-            }),
+                ))
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Vec<EsploraGetHistory>>()
+                .await?
+                .into_iter()
+                .map(|x| ElsGetHistoryRes {
+                    tx_hash: x.txid,
+                    height: x.status.block_height.unwrap_or(0) as i32,
+                }),
         );
 
         debug!(
@@ -284,21 +249,17 @@ impl UrlClient {
         // Then go through all the pages of confirmed transactions
         let mut last_txid = String::new();
         loop {
-            let response = match self.kind {
-                EsploraKind::Esplora => self.client.get(&format!(
+            let response = self
+                .client
+                .get(&format!(
                     "{}/scripthash/{}/txs/chain/{}",
                     self.url, scripthash, last_txid
-                )),
-                EsploraKind::Mempool => self.client.get(&format!(
-                    "{}/address/{}/txs/chain/{}",
-                    self.url, scripthash, last_txid
-                )),
-            }
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Vec<EsploraGetHistory>>()
-            .await?;
+                ))
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Vec<EsploraGetHistory>>()
+                .await?;
             let len = response.len();
             if let Some(elem) = response.last() {
                 last_txid = elem.txid.to_hex();
@@ -455,9 +416,6 @@ pub struct EsploraBlockchainConfig {
     pub concurrency: Option<u8>,
     /// Stop searching addresses for transactions after finding an unused gap of this length
     pub stop_gap: usize,
-    /// Esplora kind.
-    #[serde(default)]
-    pub kind: EsploraKind,
 }
 
 impl ConfigurableBlockchain for EsploraBlockchain {
