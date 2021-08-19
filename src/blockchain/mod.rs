@@ -293,7 +293,8 @@ pub enum BroadcastTxError {
 }
 
 impl BroadcastTxError {
-    fn from_electrum_response(text: &str) -> Option<Self> {
+    /// parses a bitcoin core rpc `sendrawtransaction` call error response.
+    pub fn from_core_rpc_response(text: &str) -> Option<Self> {
         text.strip_prefix("sendrawtransaction RPC error: ")
             .and_then(|text| match serde_json::from_str::<RpcError>(&text) {
                 Ok(rpc_error) => Some(match rpc_error.code {

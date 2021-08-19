@@ -502,7 +502,7 @@ impl Broadcast for EsploraBlockchain {
 
         if res.status().is_client_error() {
             let text = await_or_block!(res.text()).map_err(|_| http_error.clone())?;
-            Err(BroadcastTxError::from_electrum_response(&text)
+            Err(BroadcastTxError::from_core_rpc_response(&text)
                 .map(BroadcastError::Tx)
                 .unwrap_or(http_error))
         } else if res.status().is_server_error() {

@@ -187,7 +187,7 @@ impl Broadcast for ElectrumBlockchain {
                         BroadcastError::Tx(
                             map.get("message")
                                 .and_then(|x| x.as_str())
-                                .and_then(|text| BroadcastTxError::from_electrum_response(text))
+                                .and_then(|text| BroadcastTxError::from_core_rpc_response(text))
                                 .ok_or(fallback_err.clone())?,
                         )
                     }

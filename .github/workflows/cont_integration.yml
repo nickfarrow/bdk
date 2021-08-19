@@ -22,7 +22,7 @@ jobs:
           - compact_filters
           - esplora,key-value-db,electrum
           - compiler
-          - rpc
+          # - rpc
           - verify
     steps:
       - name: checkout
@@ -83,7 +83,7 @@ jobs:
       matrix:
         blockchain:
           - name: electrum
-          - name: rpc
+          # - name: rpc
           - name: esplora
     steps:
       - name: Checkout
