@@ -230,11 +230,11 @@ where
     D: BatchDatabase,
 {
     // Return a newly derived address using the external descriptor
-    fn get_new_address(&self) -> Result<AddressInfo, Error> {
-        let incremented_index = self.fetch_and_increment_index(KeychainKind::External)?;
+    fn get_new_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
+        let incremented_index = self.fetch_and_increment_index(keychain)?;
 
         let address_result = self
-            .descriptor
+            .get_descriptor_for_keychain(keychain)
             .as_derived(incremented_index, &self.secp)
             .address(self.network);
 
@@ -248,10 +248,12 @@ where
 
     // Return the the last previously derived address if it has not been used in a received
     // transaction. Otherwise return a new address using [`Wallet::get_new_address`].
-    fn get_unused_address(&self) -> Result<AddressInfo, Error> {
-        let current_index = self.fetch_index(KeychainKind::External)?;
+    fn get_unused_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
+        let current_index = self.fetch_index(keychain)?;
 
-        let derived_key = self.descriptor.as_derived(current_index, &self.secp);
+        let derived_key = self
+            .get_descriptor_for_keychain(keychain)
+            .as_derived(current_index, &self.secp);
 
         let script_pubkey = derived_key.script_pubkey();
 
@@ -263,7 +265,7 @@ where
             .any(|o| o.script_pubkey == script_pubkey);
 
         if found_used {
-            self.get_new_address()
+            self.get_new_address(keychain)
         } else {
             derived_key
                 .address(self.network)
@@ -276,8 +278,8 @@ where
     }
 
     // Return derived address for the external descriptor at a specific index
-    fn peek_address(&self, index: u32) -> Result<AddressInfo, Error> {
-        self.descriptor
+    fn peek_address(&self, index: u32, keychain: KeychainKind) -> Result<AddressInfo, Error> {
+        self.get_descriptor_for_keychain(keychain)
             .as_derived(index, &self.secp)
             .address(self.network)
             .map(|address| AddressInfo { index, address })
@@ -286,10 +288,10 @@ where
 
     // Return derived address for the external descriptor at a specific index and reset current
     // address index
-    fn reset_address(&self, index: u32) -> Result<AddressInfo, Error> {
-        self.set_index(KeychainKind::External, index)?;
+    fn reset_address(&self, index: u32, keychain: KeychainKind) -> Result<AddressInfo, Error> {
+        self.set_index(keychain, index)?;
 
-        self.descriptor
+        self.get_descriptor_for_keychain(keychain)
             .as_derived(index, &self.secp)
             .address(self.network)
             .map(|address| AddressInfo { index, address })
@@ -300,11 +302,26 @@ where
     /// available address index selection strategies. If none of the keys in the descriptor are derivable
     /// (ie. does not end with /*) then the same address will always be returned for any [`AddressIndex`].
     pub fn get_address(&self, address_index: AddressIndex) -> Result<AddressInfo, Error> {
+        self._get_address(address_index, KeychainKind::External)
+    }
+
+    /// Return a derived address using the internal (change) descriptor, see [`AddressIndex`] for
+    /// available address index selection strategies. If none of the keys in the descriptor are derivable
+    /// (ie. does not end with /*) then the same address will always be returned for any [`AddressIndex`].
+    pub fn get_change_address(&self, address_index: AddressIndex) -> Result<AddressInfo, Error> {
+        self._get_address(address_index, KeychainKind::Internal)
+    }
+
+    fn _get_address(
+        &self,
+        address_index: AddressIndex,
+        keychain: KeychainKind,
+    ) -> Result<AddressInfo, Error> {
         match address_index {
-            AddressIndex::New => self.get_new_address(),
-            AddressIndex::LastUnused => self.get_unused_address(),
-            AddressIndex::Peek(index) => self.peek_address(index),
-            AddressIndex::Reset(index) => self.reset_address(index),
+            AddressIndex::New => self.get_new_address(keychain),
+            AddressIndex::LastUnused => self.get_unused_address(keychain),
+            AddressIndex::Peek(index) => self.peek_address(index, keychain),
+            AddressIndex::Reset(index) => self.reset_address(index, keychain),
         }
     }
 
@@ -640,7 +657,10 @@ where
         let mut drain_output = {
             let script_pubkey = match params.drain_to {
                 Some(ref drain_recipient) => drain_recipient.clone(),
-                None => self.get_change_address()?,
+                None => self
+                    .get_change_address(AddressIndex::New)?
+                    .address
+                    .script_pubkey(),
             };
 
             TxOut {
@@ -1074,13 +1094,6 @@ where
             ),
             _ => (&self.descriptor, KeychainKind::External),
         }
-    }
-
-    fn get_change_address(&self) -> Result<Script, Error> {
-        let (desc, keychain) = self._get_descriptor_for_keychain(KeychainKind::Internal);
-        let index = self.fetch_and_increment_index(keychain)?;
-
-        Ok(desc.as_derived(index, &self.secp).script_pubkey())
     }
 
     fn fetch_and_increment_index(&self, keychain: KeychainKind) -> Result<u32, Error> {
@@ -2010,7 +2023,6 @@ pub(crate) mod test {
             .drain_to(drain_addr.script_pubkey())
             .drain_wallet();
         let (psbt, details) = builder.finish().unwrap();
-        dbg!(&psbt);
         let outputs = psbt.global.unsigned_tx.output;
 
         assert_eq!(outputs.len(), 2);
