@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add `get_internal_address` to allow you to get internal addresses just as you get external addresses.
+
 ## [v0.16.0] - [v0.15.0]
 
 - Disable `reqwest` default features.
