@@ -312,14 +312,12 @@ impl Default for TestClient {
             .expect(
                 "you should provide env var BITCOIND_EXE or specifiy a bitcoind version feature",
             );
-        dbg!(&bitcoind_exe);
         let electrs_exe = env::var("ELECTRS_EXE")
             .ok()
             .or(electrsd::downloaded_exe_path())
             .expect(
                 "you should provide env var ELECTRS_EXE or specifiy a electrsd version feature",
             );
-        dbg!(&electrs_exe);
         Self::new(bitcoind_exe, electrs_exe)
     }
 }
