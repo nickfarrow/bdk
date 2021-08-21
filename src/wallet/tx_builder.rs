@@ -47,6 +47,7 @@ use bitcoin::{OutPoint, Script, SigHashType, Transaction};
 use miniscript::descriptor::DescriptorTrait;
 
 use super::coin_selection::{CoinSelectionAlgorithm, DefaultCoinSelectionAlgorithm};
+use crate::wallet::utils::DUST_LIMIT_SATOSHI;
 use crate::{database::BatchDatabase, Error, Utxo, Wallet};
 use crate::{
     types::{FeeRate, KeychainKind, LocalUtxo, WeightedUtxo},
@@ -134,6 +135,7 @@ pub(crate) struct TxParams {
     pub(crate) recipients: Vec<(Script, u64)>,
     pub(crate) drain_wallet: bool,
     pub(crate) drain_to: Option<Script>,
+    pub(crate) split_change: Option<(u64, usize)>,
     pub(crate) fee_policy: Option<FeePolicy>,
     pub(crate) internal_policy_path: Option<BTreeMap<String, Vec<usize>>>,
     pub(crate) external_policy_path: Option<BTreeMap<String, Vec<usize>>>,
@@ -602,6 +604,13 @@ impl<'a, B, D: BatchDatabase, Cs: CoinSelectionAlgorithm<D>> TxBuilder<'a, B, D,
     /// [`drain_wallet`]: Self::drain_wallet
     pub fn drain_to(&mut self, script_pubkey: Script) -> &mut Self {
         self.params.drain_to = Some(script_pubkey);
+        self
+    }
+
+    /// Split the change into at **most** `n` utxos of value `value`
+    pub fn split_change(&mut self, value: u64, n: usize) -> &mut Self {
+        assert!(value >= DUST_LIMIT_SATOSHI);
+        self.params.split_change = Some((value, n));
         self
     }
 }
