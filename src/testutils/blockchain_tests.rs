@@ -937,7 +937,47 @@ macro_rules! bdk_blockchain_tests {
                 }
                 Broadcast::broadcast(wallet.client(), tx.clone()).unwrap();
             }
+
+            #[test]
+            #[cfg(feature = "esplora")]
+            fn test_tx_state() {
+                pub use bitcoincore_rpc::RpcApi;
+                let (wallet, descriptors, mut test_client) = init_single_sig();
+
+                test_client.receive(testutils! {
+                    @tx ( (@external descriptors, 0) => 50_000 )
+                });
+
+                wallet.sync(noop_progress(), None).unwrap();
+
+                let tx1 = {
+                    let mut builder = wallet.build_tx();
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 25_000);
+                    let (mut psbt, _details) = builder.finish().unwrap();
+                    let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
+                    psbt.extract_tx()
+                };
+
+                let tx2 = {
+                    let mut builder = wallet.build_tx();
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 25_000)
+                        .add_utxo(tx1.input[0].previous_output).unwrap();
+                    let (mut psbt, _details) = builder.finish().unwrap();
+                    let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
+                    psbt.extract_tx()
+                };
+
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::NotFound);
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::NotFound);
+                Broadcast::broadcast(wallet.client(), tx1.clone()).unwrap();
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: None });
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { txid: tx1.txid(), height: None });
+                test_client.generate(1, None);
+                let height = test_client.get_blockchain_info().unwrap().blocks as u32;
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: Some(height) });
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { height: Some(height), txid: tx1.txid() });
         }
+       }
     };
 
     ( fn $fn_name:ident ($( $tt:tt )+) -> $blockchain:ty $block:block) => {

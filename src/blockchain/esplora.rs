@@ -329,6 +329,52 @@ impl UrlClient {
 
         Ok(!outspend.spent || outspend.status.map_or(false, |status| !status.confirmed))
     }
+
+    async fn _tx_state(
+        &self,
+        inputs: &[OutPoint],
+        target_txid: Txid,
+    ) -> Result<TxState, EsploraError> {
+        #[derive(serde::Deserialize, Debug)]
+        struct OutSpend {
+            spent: bool,
+            txid: Option<Txid>,
+            status: Option<Status>,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct Status {
+            confirmed: bool,
+            block_height: Option<u32>,
+            block_hash: Option<BlockHash>,
+        }
+
+        for input in inputs {
+            let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
+            let outspend = self
+                .client
+                .get(&url)
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<OutSpend>()
+                .await?;
+
+            if let (Some(txid), Some(status)) = (outspend.txid, outspend.status) {
+                if txid == target_txid {
+                    return Ok(TxState::Present {
+                        height: status.block_height,
+                    });
+                } else {
+                    return Ok(TxState::Conflict {
+                        txid,
+                        height: status.block_height,
+                    });
+                }
+            }
+        }
+
+        Ok(TxState::NotFound)
+    }
 }
 
 #[maybe_async]
@@ -468,6 +514,12 @@ impl Broadcast for EsploraBlockchain {
         } else {
             Ok(())
         }
+    }
+}
+
+impl TransactionState for EsploraBlockchain {
+    fn tx_input_state(&self, inputs: &[OutPoint], txid: Txid) -> Result<TxState, Error> {
+        Ok(await_or_block!(self.url_client._tx_state(inputs, txid))?)
     }
 }
 

@@ -331,3 +331,38 @@ pub trait Broadcast: Blockchain {
     /// Broadcasts a transaction
     fn broadcast(&self, tx: Transaction) -> Result<(), BroadcastError>;
 }
+
+/// The state of a transaction
+#[derive(Clone, Debug, PartialEq)]
+pub enum TxState {
+    /// Not in the mempool or chain
+    NotFound,
+    /// conflicts with a tx in the mempool or chain
+    Conflict {
+        /// The conflicting transaction id
+        txid: Txid,
+        /// Whether it is confirmed
+        height: Option<u32>,
+    },
+    /// It is in the mempool or chain
+    Present {
+        /// Whether it is confirmed
+        height: Option<u32>,
+    },
+}
+
+#[maybe_async]
+/// TransactionState
+pub trait TransactionState {
+    /// Get the state of a transaction given its inputs and txid
+    fn tx_input_state(&self, inputs: &[OutPoint], txid: Txid) -> Result<TxState, Error>;
+    /// Get the state of a transaction
+    fn tx_state(&self, tx: &Transaction) -> Result<TxState, Error> {
+        let inputs = tx
+            .input
+            .iter()
+            .map(|input| input.previous_output)
+            .collect::<Vec<_>>();
+        self.tx_input_state(&inputs, tx.txid())
+    }
+}
