@@ -339,6 +339,7 @@ impl UrlClient {
         struct OutSpend {
             spent: bool,
             txid: Option<Txid>,
+            vin: Option<u32>,
             status: Option<Status>,
         }
         #[derive(serde::Deserialize, Debug)]
@@ -348,7 +349,7 @@ impl UrlClient {
             block_hash: Option<BlockHash>,
         }
 
-        for input in inputs {
+        for (i, input) in inputs.iter().enumerate() {
             let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
             let outspend = self
                 .client
@@ -359,7 +360,13 @@ impl UrlClient {
                 .json::<OutSpend>()
                 .await?;
 
-            if let (Some(txid), Some(status)) = (outspend.txid, outspend.status) {
+            if let OutSpend {
+                txid: Some(txid),
+                vin: Some(vin),
+                status: Some(status),
+                ..
+            } = outspend
+            {
                 if txid == target_txid {
                     return Ok(TxState::Present {
                         height: status.block_height,
@@ -367,6 +374,8 @@ impl UrlClient {
                 } else {
                     return Ok(TxState::Conflict {
                         txid,
+                        vin,
+                        vin_target: i as u32,
                         height: status.block_height,
                     });
                 }

@@ -341,6 +341,10 @@ pub enum TxState {
     Conflict {
         /// The conflicting transaction id
         txid: Txid,
+        /// The index of the input that conflicts with the target transaction.
+        vin: u32,
+        /// The vin of the target transaction that is being spent by the conflicting transaction.
+        vin_target: u32,
         /// Whether it is confirmed
         height: Option<u32>,
     },

@@ -971,11 +971,11 @@ macro_rules! bdk_blockchain_tests {
                 assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::NotFound);
                 Broadcast::broadcast(wallet.client(), tx1.clone()).unwrap();
                 assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: None });
-                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { txid: tx1.txid(), height: None });
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { txid: tx1.txid(), vin: 0, vin_target:0, height: None });
                 test_client.generate(1, None);
                 let height = test_client.get_blockchain_info().unwrap().blocks as u32;
                 assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: Some(height) });
-                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { height: Some(height), txid: tx1.txid() });
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { height: Some(height), vin: 0, vin_target: 0, txid: tx1.txid() });
         }
        }
     };
