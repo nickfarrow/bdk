@@ -349,6 +349,8 @@ impl UrlClient {
             block_hash: Option<BlockHash>,
         }
 
+        let mut state = TxState::NotFound;
+
         for (i, input) in inputs.iter().enumerate() {
             let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
             let outspend = self
@@ -368,21 +370,94 @@ impl UrlClient {
             } = outspend
             {
                 if txid == target_txid {
+                    // If the node is telling us the input has been spent to the tx we're looking
+                    // for then we can just exit.
                     return Ok(TxState::Present {
                         height: status.block_height,
                     });
                 } else {
-                    return Ok(TxState::Conflict {
-                        txid,
-                        vin,
-                        vin_target: i as u32,
-                        height: status.block_height,
-                    });
+                    let existing_conflict_height = match state {
+                        TxState::Conflict { height, .. } => height,
+                        _ => None,
+                    };
+                    match (status.block_height, existing_conflict_height) {
+                        (None, Some(_)) => {}
+                        (Some(conflict_height), Some(existing_conflict_height))
+                            if conflict_height > existing_conflict_height => {}
+                        // overwrite unless the existing conflict is deeper in the chain
+                        _ => {
+                            state = TxState::Conflict {
+                                txid,
+                                vin,
+                                vin_target: i as u32,
+                                height: status.block_height,
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        Ok(TxState::NotFound)
+        Ok(state)
+    }
+
+    async fn _input_state(&self, inputs: &[OutPoint]) -> Result<InputState, EsploraError> {
+        #[derive(serde::Deserialize, Debug)]
+        struct OutSpend {
+            spent: bool,
+            txid: Option<Txid>,
+            vin: Option<u32>,
+            status: Option<Status>,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct Status {
+            confirmed: bool,
+            block_height: Option<u32>,
+            block_hash: Option<BlockHash>,
+        }
+
+        let mut state = InputState::Unspent;
+
+        for (i, input) in inputs.iter().enumerate() {
+            let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
+            let outspend = self
+                .client
+                .get(&url)
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<OutSpend>()
+                .await?;
+
+            if let OutSpend {
+                txid: Some(txid),
+                vin: Some(vin),
+                status: Some(status),
+                ..
+            } = outspend
+            {
+                let existing_spend_height = match state {
+                    InputState::Spent { height, .. } => height,
+                    _ => None,
+                };
+
+                match (status.block_height, existing_spend_height) {
+                    (None, Some(_)) => {}
+                    (Some(spend_height), Some(existing_spend_height))
+                        if spend_height > existing_spend_height => {}
+                    _ => {
+                        state = InputState::Spent {
+                            index: i as u32,
+                            txid,
+                            vin,
+                            height: status.block_height,
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(state)
     }
 }
 
@@ -526,9 +601,17 @@ impl Broadcast for EsploraBlockchain {
     }
 }
 
+#[maybe_async]
 impl TransactionState for EsploraBlockchain {
     fn tx_input_state(&self, inputs: &[OutPoint], txid: Txid) -> Result<TxState, Error> {
         Ok(await_or_block!(self.url_client._tx_state(inputs, txid))?)
+    }
+}
+
+#[maybe_async]
+impl GetInputState for EsploraBlockchain {
+    fn input_state(&self, inputs: &[OutPoint]) -> Result<InputState, Error> {
+        Ok(await_or_block!(self.url_client._input_state(inputs))?)
     }
 }
 

@@ -948,11 +948,15 @@ macro_rules! bdk_blockchain_tests {
                     @tx ( (@external descriptors, 0) => 50_000 )
                 });
 
+                test_client.receive(testutils! {
+                    @tx ( (@external descriptors, 0) => 50_000 )
+                });
+
                 wallet.sync(noop_progress(), None).unwrap();
 
                 let tx1 = {
                     let mut builder = wallet.build_tx();
-                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 25_000);
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 30_000);
                     let (mut psbt, _details) = builder.finish().unwrap();
                     let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
                     psbt.extract_tx()
@@ -960,24 +964,106 @@ macro_rules! bdk_blockchain_tests {
 
                 let tx2 = {
                     let mut builder = wallet.build_tx();
-                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 25_000)
-                        .add_utxo(tx1.input[0].previous_output).unwrap();
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 30_000)
+                        // create a different conflict
+                        .add_unspendable(tx1.input[0].previous_output);
                     let (mut psbt, _details) = builder.finish().unwrap();
                     let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
                     psbt.extract_tx()
                 };
 
-                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::NotFound);
-                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::NotFound);
-                Broadcast::broadcast(wallet.client(), tx1.clone()).unwrap();
-                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: None });
-                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { txid: tx1.txid(), vin: 0, vin_target:0, height: None });
+                let tx3 = {
+                    let mut builder = wallet.build_tx();
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 30_000)
+                        // conflict with both tx1 and tx2
+                           .add_utxo(tx1.input[0].previous_output).unwrap()
+                           .add_utxo(tx2.input[0].previous_output).unwrap();
+                    let (mut psbt, _details) = builder.finish().unwrap();
+                    let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
+                    psbt.extract_tx()
+                };
+
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::NotFound, "tx1 not in broadcasted");
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::NotFound, "tx2 not in broadcasted");
+                assert_eq!(wallet.client().tx_state(&tx3).unwrap(), TxState::NotFound, "tx3 not in broadcasted");
+                Broadcast::broadcast(wallet.client(), tx2.clone()).unwrap();
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Present { height: None });
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::NotFound, "tx1 doesn't conflict with tx2 and has not been broadcast" );
+                assert_eq!(wallet.client().tx_state(&tx3).unwrap(), TxState::Conflict { txid: tx2.txid(), vin: 0, vin_target:1, height: None });
                 test_client.generate(1, None);
                 let height = test_client.get_blockchain_info().unwrap().blocks as u32;
-                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: Some(height) });
-                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Conflict { height: Some(height), vin: 0, vin_target: 0, txid: tx1.txid() });
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Present { height: Some(height) });
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::NotFound, "tx1 doesn't conflict with tx2 and has not been broadcast" );
+                assert_eq!(wallet.client().tx_state(&tx3).unwrap(), TxState::Conflict { height: Some(height), vin: 0, vin_target: 1, txid: tx2.txid() }, "tx3 should conflict with tx1");
+                Broadcast::broadcast(wallet.client(), tx1.clone()).unwrap();
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Present { height: Some(height) });
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: None } );
+                assert_eq!(wallet.client().tx_state(&tx3).unwrap(), TxState::Conflict { height: Some(height), vin: 0, vin_target: 1, txid: tx2.txid() }, "should still conflict with tx1 because tx2 is not even confirmed yet");
+                test_client.generate(1, None);
+                assert_eq!(wallet.client().tx_state(&tx2).unwrap(), TxState::Present { height: Some(height) });
+                assert_eq!(wallet.client().tx_state(&tx1).unwrap(), TxState::Present { height: Some(height + 1) } );
+                assert_eq!(wallet.client().tx_state(&tx3).unwrap(), TxState::Conflict { height: Some(height), vin: 0, vin_target: 1, txid: tx2.txid() }, "should still conflict with tx1 because it is deeper");
+                //NOTE: I would like to test this with a fork but esplora isn't working with that
+            }
+
+            #[test]
+            #[cfg(feature = "esplora")]
+            fn test_input_state() {
+                pub use bitcoincore_rpc::RpcApi;
+                let (wallet, descriptors, mut test_client) = init_single_sig();
+
+                test_client.receive(testutils! {
+                    @tx ( (@external descriptors, 0) => 50_000 )
+                });
+
+                test_client.receive(testutils! {
+                    @tx ( (@external descriptors, 0) => 50_000 )
+                });
+
+                wallet.sync(noop_progress(), None).unwrap();
+
+                let tx1 = {
+                    let mut builder = wallet.build_tx();
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 30_000);
+                    let (mut psbt, _details) = builder.finish().unwrap();
+                    let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
+                    psbt.extract_tx()
+                };
+
+                let tx2 = {
+                    let mut builder = wallet.build_tx();
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 30_000)
+                        // create a different conflict
+                        .add_unspendable(tx1.input[0].previous_output);
+                    let (mut psbt, _details) = builder.finish().unwrap();
+                    let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
+                    psbt.extract_tx()
+                };
+
+                let inputs = {
+                    let mut builder = wallet.build_tx();
+                    builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 30_000)
+                        // conflict with both tx1 and tx2
+                           .add_utxo(tx1.input[0].previous_output).unwrap()
+                           .add_utxo(tx2.input[0].previous_output).unwrap();
+                    let (mut psbt, _details) = builder.finish().unwrap();
+                    let _ = wallet.sign(&mut psbt, Default::default()).unwrap();
+                    psbt.extract_tx().input.into_iter().map(|x| x.previous_output).collect::<Vec<_>>()
+                };
+
+
+                assert_eq!(wallet.client().input_state(&inputs[..]).unwrap(), InputState::Unspent, "no inputs have been spent yet");
+                Broadcast::broadcast(wallet.client(), tx2.clone()).unwrap();
+                assert_eq!(wallet.client().input_state(&inputs).unwrap(), InputState::Spent { height: None, txid: tx2.txid(), vin: 0, index: 1 });
+                test_client.generate(1, None);
+                let height = test_client.get_blockchain_info().unwrap().blocks as u32;
+                assert_eq!(wallet.client().input_state(&inputs[..]).unwrap(), InputState::Spent { height: Some(height), txid: tx2.txid(), vin: 0, index: 1 }, "tx2 has spent it");
+                Broadcast::broadcast(wallet.client(), tx1.clone()).unwrap();
+                assert_eq!(wallet.client().input_state(&inputs[..]).unwrap(), InputState::Spent { height: Some(height), txid: tx2.txid(), vin: 0, index: 1 }, "tx2 is confirmed and tx1 isn't");
+                test_client.generate(1, None);
+                assert_eq!(wallet.client().input_state(&inputs[..]).unwrap(), InputState::Spent { height: Some(height), txid: tx2.txid(), vin: 0, index: 1 }, "tx2 is confirmed deeper than tx1");
+            }
         }
-       }
     };
 
     ( fn $fn_name:ident ($( $tt:tt )+) -> $blockchain:ty $block:block) => {

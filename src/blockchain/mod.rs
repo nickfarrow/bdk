@@ -367,6 +367,31 @@ pub trait TransactionState {
             .iter()
             .map(|input| input.previous_output)
             .collect::<Vec<_>>();
-        self.tx_input_state(&inputs, tx.txid())
+        maybe_await!(self.tx_input_state(&inputs, tx.txid()))
     }
+}
+
+#[maybe_async]
+/// GetInputState
+pub trait GetInputState {
+    /// Get the "state" of a set of utxos i.e. has any of them been spent.
+    fn input_state(&self, inputs: &[OutPoint]) -> Result<InputState, Error>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// The state of a set of inputs
+pub enum InputState {
+    /// One of the group of inputs was spent
+    Spent {
+        /// The index of the spent input in the input array
+        index: u32,
+        /// The txid of the spending tx
+        txid: Txid,
+        /// The vin of the spending tx that spends the input
+        vin: u32,
+        /// The height of the block that confirmed the tx
+        height: Option<u32>,
+    },
+    /// None of them has been spent
+    Unspent,
 }
