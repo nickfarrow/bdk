@@ -10,8 +10,9 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.53.0 # STABLE
-          - 1.46.0 # MSRV
+          - nightly
+          - 1.51.0 # gun MSRV
+          # - 1.46.0 # MSRV
         features:
           - default
           - minimal
