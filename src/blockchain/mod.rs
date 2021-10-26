@@ -27,9 +27,6 @@ use crate::database::BatchDatabase;
 use crate::error::Error;
 use crate::FeeRate;
 
-#[cfg(any(feature = "electrum", feature = "esplora"))]
-pub(crate) mod utils;
-
 #[cfg(any(feature = "electrum", feature = "esplora", feature = "compact_filters"))]
 pub mod any;
 #[cfg(any(feature = "electrum", feature = "esplora", feature = "compact_filters"))]
@@ -63,6 +60,8 @@ pub mod compact_filters;
 
 #[cfg(feature = "compact_filters")]
 pub use self::compact_filters::CompactFiltersBlockchain;
+
+mod script_sync;
 
 /// Capabilities that can be supported by a [`Blockchain`] backend
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

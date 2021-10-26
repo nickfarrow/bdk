@@ -1,0 +1,514 @@
+// Bitcoin Dev Kit
+// Written in 2020 by Alekos Filini <alekos.filini@gmail.com>
+//
+// Copyright (c) 2020-2021 Bitcoin Dev Kit Developers
+//
+// This file is licensed under the Apache License, Version 2.0 <LICENSE-APACHE
+// or http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your option.
+// You may not use this file except in accordance with one or both of these
+// licenses.
+
+//! Esplora by way of `ureq` HTTP client.
+
+use std::collections::{HashMap, HashSet};
+use std::io;
+use std::io::Read;
+use std::time::Duration;
+
+#[allow(unused_imports)]
+use log::{debug, error, info, trace};
+
+use ureq::{Agent, Proxy, Response};
+
+use bitcoin::consensus::{deserialize, serialize};
+use bitcoin::hashes::hex::{FromHex, ToHex};
+use bitcoin::hashes::{sha256, Hash};
+use bitcoin::{BlockHash, BlockHeader, Script, Transaction, Txid};
+
+use super::responses::Tx;
+use super::EsploraBlockchainConfig;
+use crate::blockchain::esplora::EsploraError;
+use crate::blockchain::*;
+use crate::database::BatchDatabase;
+use crate::error::Error;
+use crate::FeeRate;
+
+const DEFAULT_CONCURRENT_REQUESTS: u8 = 4;
+
+#[derive(Debug, Clone)]
+struct UrlClient {
+    url: String,
+    agent: Agent,
+}
+
+/// Structure that implements the logic to sync with Esplora
+///
+/// ## Example
+/// See the [`blockchain::esplora`](crate::blockchain::esplora) module for a usage example.
+#[derive(Debug)]
+pub struct EsploraBlockchain {
+    url_client: UrlClient,
+    stop_gap: usize,
+    concurrency: u8,
+}
+
+impl EsploraBlockchain {
+    /// Create a new instance of the client from a base URL and the `stop_gap`.
+    pub fn new(base_url: &str, stop_gap: usize) -> Self {
+        EsploraBlockchain {
+            url_client: UrlClient {
+                url: base_url.to_string(),
+                agent: Agent::new(),
+            },
+            stop_gap,
+            concurrency: DEFAULT_CONCURRENT_REQUESTS,
+        }
+    }
+
+    /// Set the inner `ureq` agent.
+    pub fn with_agent(mut self, agent: Agent) -> Self {
+        self.url_client.agent = agent;
+        self
+    }
+
+    /// Make thsi number of parallel requests
+    pub fn with_concurrency(mut self, concurrency: u8) -> Self {
+        self.concurrency = concurrency;
+        self
+    }
+}
+
+impl Blockchain for EsploraBlockchain {
+    fn get_capabilities(&self) -> HashSet<Capability> {
+        vec![
+            Capability::FullHistory,
+            Capability::GetAnyTx,
+            Capability::AccurateFees,
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    fn setup<D: BatchDatabase, P: Progress>(
+        &self,
+        database: &mut D,
+        _progress_update: P,
+    ) -> Result<(), Error> {
+        use crate::blockchain::script_sync::Request;
+        let mut request = script_sync::start(database, self.stop_gap)?;
+        let mut tx_index: HashMap<Txid, Tx> = HashMap::new();
+        let batch_update = loop {
+            request = match request {
+                Request::Script(script_req) => {
+                    let scripts = script_req
+                        .request()
+                        .take(self.concurrency as usize)
+                        .cloned();
+
+                    let handles = scripts.map(move |script| {
+                        let client = self.url_client.clone();
+                        // make each request in its own thread.
+                        std::thread::spawn(move || {
+                            let mut related_txs: Vec<Tx> = client._scripthash_txs(&script, None)?;
+
+                            let n_confirmed =
+                                related_txs.iter().filter(|tx| tx.status.confirmed).count();
+                            // esplora pages on 25 confirmed transactions. If there's more than
+                            // 25 we need to keep requesting.
+                            if n_confirmed >= 25 {
+                                loop {
+                                    let new_related_txs: Vec<Tx> = client._scripthash_txs(
+                                        &script,
+                                        Some(related_txs.last().unwrap().txid),
+                                    )?;
+                                    let n = new_related_txs.len();
+                                    related_txs.extend(new_related_txs);
+                                    // we've reached the end
+                                    if n < 25 {
+                                        break;
+                                    }
+                                }
+                            }
+                            Result::<_, Error>::Ok(related_txs)
+                        })
+                    });
+
+                    let txs_per_script: Vec<Vec<Tx>> = handles
+                        .map(|handle| handle.join().unwrap())
+                        .collect::<Result<_, _>>()?;
+                    let mut satisfaction = vec![];
+
+                    for txs in txs_per_script {
+                        satisfaction.push(
+                            txs.iter()
+                                .map(|tx| (tx.txid, tx.status.block_height))
+                                .collect(),
+                        );
+                        for tx in txs {
+                            tx_index.insert(tx.txid, tx);
+                        }
+                    }
+
+                    script_req.satisfy(satisfaction)?
+                }
+                Request::Conftime(conftime_req) => {
+                    let conftimes = conftime_req
+                        .request()
+                        .map(|txid| {
+                            tx_index
+                                .get(txid)
+                                .expect("must be in index")
+                                .confirmation_time()
+                        })
+                        .collect();
+                    conftime_req.satisfy(conftimes)?
+                }
+                Request::Tx(tx_req) => {
+                    let full_txs = tx_req
+                        .request()
+                        .map(|txid| {
+                            let tx = tx_index.get(txid).expect("must be in index");
+                            (tx.previous_outputs(), tx.to_tx())
+                        })
+                        .collect();
+                    tx_req.satisfy(full_txs)?
+                }
+                Request::Finish(batch_update) => break batch_update,
+            }
+        };
+
+        database.commit_batch(batch_update)?;
+
+        Ok(())
+    }
+
+    fn get_tx(&self, txid: &Txid) -> Result<Option<Transaction>, Error> {
+        Ok(self.url_client._get_tx(txid)?)
+    }
+
+    fn broadcast(&self, tx: &Transaction) -> Result<(), Error> {
+        let _txid = self.url_client._broadcast(tx)?;
+        Ok(())
+    }
+
+    fn get_height(&self) -> Result<u32, Error> {
+        Ok(self.url_client._get_height()?)
+    }
+
+    fn estimate_fee(&self, target: usize) -> Result<FeeRate, Error> {
+        let estimates = self.url_client._get_fee_estimates()?;
+        super::into_fee_rate(target, estimates)
+    }
+}
+
+impl UrlClient {
+    fn _get_tx(&self, txid: &Txid) -> Result<Option<Transaction>, EsploraError> {
+        let resp = self
+            .agent
+            .get(&format!("{}/tx/{}/raw", self.url, txid))
+            .call();
+
+        match resp {
+            Ok(resp) => Ok(Some(deserialize(&into_bytes(resp)?)?)),
+            Err(ureq::Error::Status(code, _)) => {
+                if is_status_not_found(code) {
+                    return Ok(None);
+                }
+                Err(EsploraError::HttpResponse(code))
+            }
+            Err(e) => Err(EsploraError::Ureq(e)),
+        }
+    }
+
+    fn _get_tx_no_opt(&self, txid: &Txid) -> Result<Transaction, EsploraError> {
+        match self._get_tx(txid) {
+            Ok(Some(tx)) => Ok(tx),
+            Ok(None) => Err(EsploraError::TransactionNotFound(*txid)),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn _get_header(&self, block_height: u32) -> Result<BlockHeader, EsploraError> {
+        let resp = self
+            .agent
+            .get(&format!("{}/block-height/{}", self.url, block_height))
+            .call();
+
+        let bytes = match resp {
+            Ok(resp) => Ok(into_bytes(resp)?),
+            Err(ureq::Error::Status(code, _)) => Err(EsploraError::HttpResponse(code)),
+            Err(e) => Err(EsploraError::Ureq(e)),
+        }?;
+
+        let hash = std::str::from_utf8(&bytes)
+            .map_err(|_| EsploraError::HeaderHeightNotFound(block_height))?;
+
+        let resp = self
+            .agent
+            .get(&format!("{}/block/{}/header", self.url, hash))
+            .call();
+
+        match resp {
+            Ok(resp) => Ok(deserialize(&Vec::from_hex(&resp.into_string()?)?)?),
+            Err(ureq::Error::Status(code, _)) => Err(EsploraError::HttpResponse(code)),
+            Err(e) => Err(EsploraError::Ureq(e)),
+        }
+    }
+
+    fn _broadcast(&self, transaction: &Transaction) -> Result<(), EsploraError> {
+        self.agent
+            .post(&format!("{}/tx", self.url))
+            .send_string(&serialize(transaction).to_hex())?;
+        Ok(())
+    }
+
+    fn _get_height(&self) -> Result<u32, EsploraError> {
+        let resp = self
+            .agent
+            .get(&format!("{}/blocks/tip/height", self.url))
+            .call()?;
+
+        Ok(resp.into_string()?.parse()?)
+    }
+
+    fn _get_fee_estimates(&self) -> Result<HashMap<String, f64>, EsploraError> {
+        let resp = self
+            .agent
+            .get(&format!("{}/fee-estimates", self.url,))
+            .call()?;
+
+        let map: HashMap<String, f64> = resp.into_json()?;
+        Ok(map)
+    }
+
+    fn _scripthash_txs(
+        &self,
+        script: &Script,
+        last_seen: Option<Txid>,
+    ) -> Result<Vec<Tx>, EsploraError> {
+        let script_hash = sha256::Hash::hash(script.as_bytes()).into_inner().to_hex();
+        let url = match last_seen {
+            Some(last_seen) => format!("{}/scripthash/{}/txs/{}", self.url, script_hash, last_seen),
+            None => format!("{}/scripthash/{}/txs", self.url, script_hash),
+        };
+        Ok(self.agent.get(&url).call()?.into_json()?)
+    }
+
+    fn _tx_state(&self, inputs: &[OutPoint], target_txid: Txid) -> Result<TxState, EsploraError> {
+        #[derive(serde::Deserialize, Debug)]
+        struct OutSpend {
+            spent: bool,
+            txid: Option<Txid>,
+            vin: Option<u32>,
+            status: Option<Status>,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct Status {
+            confirmed: bool,
+            block_height: Option<u32>,
+            block_hash: Option<BlockHash>,
+        }
+
+        let mut state = TxState::NotFound;
+
+        for (i, input) in inputs.iter().enumerate() {
+            let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
+            let outspend = self.agent.get(&url).call()?.into_json::<OutSpend>()?;
+
+            if let OutSpend {
+                txid: Some(txid),
+                vin: Some(vin),
+                status: Some(status),
+                ..
+            } = outspend
+            {
+                if txid == target_txid {
+                    // If the node is telling us the input has been spent to the tx we're looking
+                    // for then we can just exit.
+                    return Ok(TxState::Present {
+                        height: status.block_height,
+                    });
+                } else {
+                    let existing_conflict_height = match state {
+                        TxState::Conflict { height, .. } => height,
+                        _ => None,
+                    };
+                    match (status.block_height, existing_conflict_height) {
+                        (None, Some(_)) => {}
+                        (Some(conflict_height), Some(existing_conflict_height))
+                            if conflict_height > existing_conflict_height => {}
+                        // overwrite unless the existing conflict is deeper in the chain
+                        _ => {
+                            state = TxState::Conflict {
+                                txid,
+                                vin,
+                                vin_target: i as u32,
+                                height: status.block_height,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(state)
+    }
+
+    fn _input_state(&self, inputs: &[OutPoint]) -> Result<InputState, EsploraError> {
+        #[derive(serde::Deserialize, Debug)]
+        struct OutSpend {
+            spent: bool,
+            txid: Option<Txid>,
+            vin: Option<u32>,
+            status: Option<Status>,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct Status {
+            confirmed: bool,
+            block_height: Option<u32>,
+            block_hash: Option<BlockHash>,
+        }
+
+        let mut state = InputState::Unspent;
+
+        for (i, input) in inputs.iter().enumerate() {
+            let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
+            let outspend = self.agent.get(&url).call()?.into_json::<OutSpend>()?;
+
+            if let OutSpend {
+                txid: Some(txid),
+                vin: Some(vin),
+                status: Some(status),
+                ..
+            } = outspend
+            {
+                let existing_spend_height = match state {
+                    InputState::Spent { height, .. } => height,
+                    _ => None,
+                };
+
+                match (status.block_height, existing_spend_height) {
+                    (None, Some(_)) => {}
+                    (Some(spend_height), Some(existing_spend_height))
+                        if spend_height > existing_spend_height => {}
+                    _ => {
+                        state = InputState::Spent {
+                            index: i as u32,
+                            txid,
+                            vin,
+                            height: status.block_height,
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(state)
+    }
+}
+
+fn is_status_not_found(status: u16) -> bool {
+    status == 404
+}
+
+fn into_bytes(resp: Response) -> Result<Vec<u8>, io::Error> {
+    const BYTES_LIMIT: usize = 10 * 1_024 * 1_024;
+
+    let mut buf: Vec<u8> = vec![];
+    resp.into_reader()
+        .take((BYTES_LIMIT + 1) as u64)
+        .read_to_end(&mut buf)?;
+    if buf.len() > BYTES_LIMIT {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "response too big for into_bytes",
+        ));
+    }
+
+    Ok(buf)
+}
+
+impl ConfigurableBlockchain for EsploraBlockchain {
+    type Config = EsploraBlockchainConfig;
+
+    fn from_config(config: &Self::Config) -> Result<Self, Error> {
+        let mut agent_builder = ureq::AgentBuilder::new();
+
+        if let Some(timeout) = config.timeout {
+            agent_builder = agent_builder.timeout(Duration::from_secs(timeout))
+        }
+
+        if let Some(proxy) = &config.proxy {
+            agent_builder = agent_builder
+                .proxy(Proxy::new(proxy).map_err(|e| Error::Esplora(Box::new(e.into())))?);
+        }
+
+        let mut blockchain = EsploraBlockchain::new(config.base_url.as_str(), config.stop_gap)
+            .with_agent(agent_builder.build());
+
+        if let Some(concurrency) = config.concurrency {
+            blockchain = blockchain.with_concurrency(concurrency);
+        }
+
+        Ok(blockchain)
+    }
+}
+
+impl Broadcast for EsploraBlockchain {
+    fn broadcast(&self, transaction: Transaction) -> Result<(), BroadcastError> {
+        let url = format!("{}/tx", self.url_client.url);
+
+        self.url_client
+            .agent
+            .post(&url)
+            .send_string(&serialize(&transaction).to_hex())
+            .map_err(|err| match err {
+                ureq::Error::Status(status, res) => {
+                    let http_error = BroadcastError::Http {
+                        status: Some(status),
+                        url: url.clone(),
+                    };
+
+                    if status == 400 {
+                        res.into_string()
+                            .map(|text| {
+                                BroadcastTxError::from_core_rpc_response(&text)
+                                    .map(BroadcastError::Tx)
+                                    .unwrap_or(http_error.clone())
+                            })
+                            .unwrap_or(http_error.clone())
+                    } else {
+                        http_error
+                    }
+                }
+                _ => BroadcastError::Http {
+                    status: None,
+                    url: url.clone(),
+                },
+            })?;
+
+        Ok(())
+    }
+}
+
+impl From<ureq::Error> for EsploraError {
+    fn from(e: ureq::Error) -> Self {
+        match e {
+            ureq::Error::Status(code, _) => EsploraError::HttpResponse(code),
+            e => EsploraError::Ureq(e),
+        }
+    }
+}
+
+impl TransactionState for EsploraBlockchain {
+    fn tx_input_state(&self, inputs: &[OutPoint], txid: Txid) -> Result<TxState, Error> {
+        Ok(self.url_client._tx_state(inputs, txid)?)
+    }
+}
+
+impl GetInputState for EsploraBlockchain {
+    fn input_state(&self, inputs: &[OutPoint]) -> Result<InputState, Error> {
+        Ok(self.url_client._input_state(inputs)?)
+    }
+}

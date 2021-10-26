@@ -228,9 +228,6 @@ pub extern crate bitcoincore_rpc;
 #[cfg(feature = "electrum")]
 pub extern crate electrum_client;
 
-#[cfg(feature = "esplora")]
-pub extern crate reqwest;
-
 #[cfg(feature = "key-value-db")]
 pub extern crate sled;
 

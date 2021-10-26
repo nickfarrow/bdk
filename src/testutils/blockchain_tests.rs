@@ -354,7 +354,7 @@ macro_rules! bdk_blockchain_tests {
             use $crate::types::KeychainKind;
             use $crate::{Wallet, FeeRate};
             use $crate::testutils;
-
+            use $crate::blockchain::*;
             use super::*;
 
             #[allow(unused_variables)]
@@ -864,45 +864,44 @@ macro_rules! bdk_blockchain_tests {
                 assert!(wallet.get_balance().unwrap() > 0, "incorrect balance after receiving coinbase");
             }
 
+            // #[test]
+            // #[cfg(feature = "esplora")]
+            // fn test_utxo_exists() {
+            //     use std::str::FromStr;
+            //     let (wallet, descriptors, mut test_client) = init_single_sig();
+            //     assert!(!wallet
+            //             .client()
+            //             .utxo_exists(OutPoint {
+            //                 txid:  Txid::from_str("0d3dbc4a250d7bbc12e57fd7e13c7875cca726d757217d97eb910fd8ad24af79").unwrap(),
+            //                 vout: 0 })
+            //             .unwrap(), "random UTXO shouldn't exist");
+
+            //     test_client.receive(testutils! {
+            //         @tx ( (@external descriptors, 0) => 50_000 )
+            //     });
+
+            //     wallet.sync(noop_progress(), None).unwrap();
+            //     assert_eq!(wallet.get_balance().unwrap(), 50_000);
+            //     let outpoint = wallet.list_unspent().unwrap()[0].outpoint;
+            //     assert!(wallet.client().utxo_exists(outpoint).unwrap(), "utxo should exist");
+
+            //     let mut builder = wallet.build_tx();
+            //     builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 25_000);
+            //     let (mut psbt, _details) = builder.finish().unwrap();
+            //     let finalized = wallet.sign(&mut psbt, Default::default()).unwrap();
+            //     assert!(finalized, "Cannot finalize transaction");
+            //     let tx = psbt.extract_tx();
+            //     wallet.broadcast(tx).unwrap();
+            //     assert!(wallet.client().utxo_exists(outpoint).unwrap(), "UTXO should still be there even when spending tx is in mempool");
+            //     test_client.generate(1, None);
+            //     assert!(!wallet.client().utxo_exists(outpoint).unwrap(), "UTXO should be gone now");
+            // }
+
             #[test]
             #[cfg(feature = "esplora")]
-            fn test_utxo_exists() {
-                use std::str::FromStr;
-                let (wallet, descriptors, mut test_client) = init_single_sig();
-                assert!(!wallet
-                        .client()
-                        .utxo_exists(OutPoint {
-                            txid:  Txid::from_str("0d3dbc4a250d7bbc12e57fd7e13c7875cca726d757217d97eb910fd8ad24af79").unwrap(),
-                            vout: 0 })
-                        .unwrap(), "random UTXO shouldn't exist");
-
-                test_client.receive(testutils! {
-                    @tx ( (@external descriptors, 0) => 50_000 )
-                });
-
-                wallet.sync(noop_progress(), None).unwrap();
-                assert_eq!(wallet.get_balance().unwrap(), 50_000);
-                let outpoint = wallet.list_unspent().unwrap()[0].outpoint;
-                assert!(wallet.client().utxo_exists(outpoint).unwrap(), "utxo should exist");
-
-                let mut builder = wallet.build_tx();
-                builder.add_recipient(wallet.get_address($crate::wallet::AddressIndex::New).unwrap().script_pubkey(), 25_000);
-                let (mut psbt, _details) = builder.finish().unwrap();
-                let finalized = wallet.sign(&mut psbt, Default::default()).unwrap();
-                assert!(finalized, "Cannot finalize transaction");
-                let tx = psbt.extract_tx();
-                wallet.broadcast(tx).unwrap();
-                assert!(wallet.client().utxo_exists(outpoint).unwrap(), "UTXO should still be there even when spending tx is in mempool");
-                test_client.generate(1, None);
-                assert!(!wallet.client().utxo_exists(outpoint).unwrap(), "UTXO should be gone now");
-            }
-
-            #[test]
-            #[cfg(any(feature = "esplora", feature = "electrum"))]
             fn test_broadcast() {
-                use crate::blockchain::Broadcast;
+                use crate::blockchain::{BroadcastError, Broadcast};
                 let (wallet, descriptors, mut test_client) = init_single_sig();
-                println!("{}", descriptors.0);
                 let node_addr = test_client.get_node_address();
 
                 test_client.receive(testutils! {
@@ -935,7 +934,22 @@ macro_rules! bdk_blockchain_tests {
                     tx.input[0].witness[1][0] += 42;
                     assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyRejected)));
                 }
+
                 Broadcast::broadcast(wallet.client(), tx.clone()).unwrap();
+
+                {
+                    let tx2 = {
+                        let mut builder = wallet.build_tx();
+                        builder.add_utxo(tx.input[0].previous_output).unwrap();
+                        builder.add_recipient(node_addr.script_pubkey(), 30_000);
+                        let (mut psbt, _details) = builder.finish().unwrap();
+                        let finalized = wallet.sign(&mut psbt, Default::default()).unwrap();
+                        assert!(finalized, "Cannot finalize transaction");
+                        psbt.extract_tx()
+                    };
+
+                    assert_eq!(Broadcast::broadcast(wallet.client(), tx2.clone()), Err(BroadcastError::Tx(BroadcastTxError::ConflictsWithMempool)));
+                }
             }
 
             #[test]

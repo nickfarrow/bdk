@@ -24,8 +24,9 @@ thiserror = "1"
 # Optional dependencies
 sled = { version = "0.34", optional = true }
 electrum-client = { version = "0.8", optional = true }
-reqwest = { version = "0.11", optional = true, features = ["json"] }
-futures = { version = "0.3", optional = true }
+# reqwest = { version = "0.11", optional = true, features = ["json"] }
+# futures = { version = "0.3", optional = true }
+ureq = { version = "2", optional = true, features = ["json"] }
 async-trait = { version = "0.1", optional = true }
 rocksdb = { version = "0.14", optional = true }
 cc = { version = ">=1.0.64", optional = true }
@@ -51,9 +52,9 @@ rand = { version = "^0.7", features = ["wasm-bindgen"] }
 minimal = []
 compiler = ["miniscript/compiler"]
 verify = ["bitcoinconsensus"]
-default = ["key-value-db", "electrum"]
+default = ["key-value-db", "esplora"]
 electrum = ["electrum-client"]
-esplora = ["reqwest", "futures"]
+esplora = ["ureq"]
 compact_filters = ["rocksdb", "socks", "lazy_static", "cc"]
 key-value-db = ["sled"]
 async-interface = ["async-trait"]
