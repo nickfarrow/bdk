@@ -258,7 +258,7 @@ pub enum BroadcastError {
     #[error("transaction was not broadcast because {0}")]
     Tx(BroadcastTxError),
     /// There was an error making the HTTP on the backend
-    #[error("There was a problem with the HTTP request to {url:} (status: {status:?})")]
+    #[error("there was a problem with the HTTP request to {url:} (status: {status:?})")]
     Http {
         /// HTTP status if we got a response.
         status: Option<u16>,
@@ -266,7 +266,7 @@ pub enum BroadcastError {
         url: String,
     },
     /// The electrum server returned an error while broadcasting the transaction.
-    #[error("There was an error while broadcasting the transaction electrum server {0:}")]
+    #[error("there was an error while broadcasting the transaction electrum server {0:}")]
     Other(String),
 }
 
@@ -289,6 +289,9 @@ pub enum BroadcastTxError {
     /// replaceable).
     #[error("the transaction conflicts with one that is already in the mempool")]
     ConflictsWithMempool,
+    /// The transaction has an input that is missing or spent.
+    #[error("the transaction has an input that is missing or spent")]
+    MissingOrSpent,
 }
 
 impl BroadcastTxError {
@@ -297,7 +300,16 @@ impl BroadcastTxError {
         text.strip_prefix("sendrawtransaction RPC error: ")
             .and_then(|text| match serde_json::from_str::<RpcError>(&text) {
                 Ok(rpc_error) => Some(match rpc_error.code {
-                    -25 => BroadcastTxError::VerifyError,
+                    -25 => {
+                        if rpc_error
+                            .message
+                            .starts_with("bad-txns-inputs-missingorspent")
+                        {
+                            BroadcastTxError::MissingOrSpent
+                        } else {
+                            BroadcastTxError::VerifyError
+                        }
+                    }
                     -26 => {
                         if rpc_error
                             .message
