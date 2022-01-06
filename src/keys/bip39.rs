@@ -118,7 +118,7 @@ impl<Ctx: ScriptContext> GeneratableKey<Ctx> for Mnemonic {
     type Entropy = [u8; 32];
 
     type Options = (WordCount, Language);
-    type Error = Option<bip39::Error>;
+    type Error = bip39::Error;
 
     fn generate_with_entropy(
         (word_count, language): Self::Options,
