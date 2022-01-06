@@ -1,6 +1,6 @@
 [package]
 name = "bdk"
-version = "0.9.1-dev"
+version = "0.14.1-dev"
 edition = "2018"
 authors = ["Alekos Filini <alekos.filini@gmail.com>", "Riccardo Casatta <riccardo@casatta.it>"]
 homepage = "https://bitcoindevkit.org"
@@ -12,10 +12,10 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-bdk-macros = "^0.4"
+bdk-macros = "^0.6"
 log = "^0.4"
-miniscript = "6"
-bitcoin = { version = "0.27", features = ["use-serde", "base64"] }
+miniscript = { version = "^6.0", features = ["use-serde"] }
+bitcoin = { version = "^0.27", features = ["use-serde", "base64"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 rand = "^0.7"
@@ -24,20 +24,23 @@ thiserror = "1"
 # Optional dependencies
 sled = { version = "0.34", optional = true }
 electrum-client = { version = "0.8", optional = true }
-# reqwest = { version = "0.11", optional = true, features = ["json"] }
-# futures = { version = "0.3", optional = true }
-ureq = { version = "2", optional = true, features = ["json"] }
+rusqlite = { version = "0.25.3", optional = true }
+ahash = { version = "=0.7.4", optional = true }
+reqwest = { version = "0.11", optional = true, features = ["json"] }
+ureq = { version = "~2.2.0", features = ["json"], optional = true }
+futures = { version = "0.3", optional = true }
 async-trait = { version = "0.1", optional = true }
-rocksdb = { version = "0.14", optional = true }
+rocksdb = { version = "0.14", default-features = false, features = ["snappy"], optional = true }
 cc = { version = ">=1.0.64", optional = true }
 socks = { version = "0.3", optional = true }
 lazy_static = { version = "1.4", optional = true }
-tiny-bip39 = { version = "0.8.1", optional = true }
+electrsd = { version= "0.13", features = ["trigger", "bitcoind_22_0"], optional = true }
+
+bip39 = { version = "1.0.1", optional = true }
 bitcoinconsensus = { version = "0.19.0-3", optional = true }
 
 # Needed by bdk_blockchain_tests macro
-bitcoincore-rpc = { package = "core-rpc", version = "0.14", optional = true }
-electrsd = { version = "0.10", features = ["trigger", "bitcoind_0_21_1"], optional = true }
+bitcoincore-rpc = { version = "0.14", optional = true }
 
 # Platform-specific dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -52,22 +55,41 @@ rand = { version = "^0.7", features = ["wasm-bindgen"] }
 minimal = []
 compiler = ["miniscript/compiler"]
 verify = ["bitcoinconsensus"]
-default = ["key-value-db", "esplora"]
-electrum = ["electrum-client"]
-esplora = ["ureq"]
+default = ["key-value-db", "electrum"]
+sqlite = ["rusqlite", "ahash"]
 compact_filters = ["rocksdb", "socks", "lazy_static", "cc"]
 key-value-db = ["sled"]
-async-interface = ["async-trait"]
 all-keys = ["keys-bip39"]
-keys-bip39 = ["tiny-bip39"]
+keys-bip39 = ["bip39"]
 rpc = ["bitcoincore-rpc"]
+
+# We currently provide mulitple implementations of `Blockchain`, all are
+# blocking except for the `EsploraBlockchain` which can be either async or
+# blocking, depending on the HTTP client in use.
+#
+# - Users wanting asynchronous HTTP calls should enable `async-interface` to get
+#   access to the asynchronous method implementations. Then, if Esplora is wanted,
+#   enable `esplora` AND `reqwest` (`--features=use-esplora-reqwest`).
+# - Users wanting blocking HTTP calls can use any of the other blockchain
+#   implementations (`compact_filters`, `electrum`, or `esplora`). Users wanting to
+#   use Esplora should enable `esplora` AND `ureq`  (`--features=use-esplora-ureq`).
+#
+# WARNING: Please take care with the features below, various combinations will
+# fail to build. We cannot currently build `bdk` with `--all-features`.
+async-interface = ["async-trait"]
+electrum = ["electrum-client"]
+# MUST ALSO USE `--no-default-features`.
+use-esplora-reqwest = ["esplora", "reqwest", "reqwest/socks", "futures"]
+use-esplora-ureq = ["esplora", "ureq", "ureq/socks"]
+# Typical configurations will not need to use `esplora` feature directly.
+esplora = []
 
 
 # Debug/Test features
-test-blockchains = ["bitcoincore-rpc", "electrum-client"]
+test-blockchains = ["bitcoincore-rpc", "electrum-client", "electrsd"]
 test-electrum = ["electrum", "electrsd/electrs_0_8_10", "test-blockchains"]
 test-rpc = ["rpc", "electrsd/electrs_0_8_10", "test-blockchains"]
-test-esplora = ["esplora", "electrsd/legacy", "electrsd/esplora_a33e97e1", "test-blockchains"]
+test-esplora = ["electrsd/legacy", "electrsd/esplora_a33e97e1", "test-blockchains"]
 test-md-docs = ["electrum"]
 
 [dev-dependencies]
@@ -89,6 +111,6 @@ required-features = ["compiler"]
 [workspace]
 members = ["macros"]
 [package.metadata.docs.rs]
-features = ["compiler", "electrum", "esplora", "compact_filters", "rpc", "key-value-db", "all-keys", "verify"]
+features = ["compiler", "electrum", "esplora", "ureq", "compact_filters", "rpc", "key-value-db", "sqlite", "all-keys", "verify"]
 # defines the configuration attribute `docsrs`
 rustdoc-args = ["--cfg", "docsrs"]

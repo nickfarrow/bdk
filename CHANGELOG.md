@@ -6,13 +6,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Overhauled sync logic for electrum and esplora.
+- Unify ureq and reqwest esplora backends to have the same configuration parameters. This means reqwest now has a timeout parameter and ureq has a concurrency parameter.
+- Fixed esplora fee estimation.
+- Fixed generating WIF in the correct network format.
+
+## [v0.14.0] - [v0.13.0]
+
+- BIP39 implementation dependency, in `keys::bip39` changed from tiny-bip39 to rust-bip39.
+- Add new method on the `TxBuilder` to embed data in the transaction via `OP_RETURN`. To allow that a fix to check the dust only on spendable output has been introduced.
+- Update the `Database` trait to store the last sync timestamp and block height
+- Rename `ConfirmationTime` to `BlockTime`
+
+## [v0.13.0] - [v0.12.0]
+
+- Exposed `get_tx()` method from `Database` to `Wallet`.
+
+## [v0.12.0] - [v0.11.0]
+
+- Activate `miniscript/use-serde` feature to allow consumers of the library to access it via the re-exported `miniscript` crate.
+- Add support for proxies in `EsploraBlockchain`
+- Added `SqliteDatabase` that implements `Database` backed by a sqlite database using `rusqlite` crate.
+
+## [v0.11.0] - [v0.10.0]
+
+- Added `flush` method to the `Database` trait to explicitly flush to disk latest changes on the db.
+
+## [v0.10.0] - [v0.9.0]
+
+- Added `RpcBlockchain` in the `AnyBlockchain` struct to allow using Rpc backend where `AnyBlockchain` is used (eg `bdk-cli`)
+- Removed hard dependency on `tokio`.
+
 ### Wallet
 
 - Removed and replaced `set_single_recipient` with more general `drain_to` and replaced `maintain_single_recipient` with `allow_shrinking`.
 
 ### Blockchain
 
-- Removed `stop_gap` from `Blockchain` trait and added it to only `ElectrumBlockchain` and `EsploraBlockchain` structs  
+- Removed `stop_gap` from `Blockchain` trait and added it to only `ElectrumBlockchain` and `EsploraBlockchain` structs.
+- Added a `ureq` backend for use when not using feature `async-interface` or target WASM. `ureq` is a blocking HTTP client.
 
 ## [v0.9.0] - [v0.8.0]
 
@@ -354,7 +386,7 @@ final transaction is created by calling `finish` on the builder.
 - Use `MemoryDatabase` in the compiler example
 - Make the REPL return JSON
 
-[unreleased]: https://github.com/bitcoindevkit/bdk/compare/v0.9.0...HEAD
+[unreleased]: https://github.com/bitcoindevkit/bdk/compare/v0.11.0...HEAD
 [0.1.0-beta.1]: https://github.com/bitcoindevkit/bdk/compare/96c87ea5...0.1.0-beta.1
 [v0.2.0]: https://github.com/bitcoindevkit/bdk/compare/0.1.0-beta.1...v0.2.0
 [v0.3.0]: https://github.com/bitcoindevkit/bdk/compare/v0.2.0...v0.3.0
@@ -365,3 +397,8 @@ final transaction is created by calling `finish` on the builder.
 [v0.7.0]: https://github.com/bitcoindevkit/bdk/compare/v0.6.0...v0.7.0
 [v0.8.0]: https://github.com/bitcoindevkit/bdk/compare/v0.7.0...v0.8.0
 [v0.9.0]: https://github.com/bitcoindevkit/bdk/compare/v0.8.0...v0.9.0
+[v0.10.0]: https://github.com/bitcoindevkit/bdk/compare/v0.9.0...v0.10.0
+[v0.11.0]: https://github.com/bitcoindevkit/bdk/compare/v0.10.0...v0.11.0
+[v0.12.0]: https://github.com/bitcoindevkit/bdk/compare/v0.11.0...v0.12.0
+[v0.13.0]: https://github.com/bitcoindevkit/bdk/compare/v0.12.0...v0.13.0
+[v0.14.0]: https://github.com/bitcoindevkit/bdk/compare/v0.13.0...v0.14.0

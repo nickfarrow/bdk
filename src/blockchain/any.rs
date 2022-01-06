@@ -37,7 +37,7 @@
 //! )?;
 //! # }
 //!
-//! # #[cfg(feature = "esplora")]
+//! # #[cfg(all(feature = "esplora", feature = "ureq"))]
 //! # {
 //! let esplora_blockchain = EsploraBlockchain::new("...", 20);
 //! let wallet_esplora: Wallet<AnyBlockchain, _> = Wallet::new(
@@ -60,6 +60,8 @@
 //! # use bdk::blockchain::*;
 //! # use bdk::database::MemoryDatabase;
 //! # use bdk::Wallet;
+//! # #[cfg(all(feature = "esplora", feature = "ureq"))]
+//! # {
 //! let config = serde_json::from_str("...")?;
 //! let blockchain = AnyBlockchain::from_config(&config)?;
 //! let wallet = Wallet::new(
@@ -69,6 +71,7 @@
 //!     MemoryDatabase::default(),
 //!     blockchain,
 //! )?;
+//! # }
 //! # Ok::<(), bdk::Error>(())
 //! ```
 
@@ -94,6 +97,8 @@ macro_rules! impl_inner_method {
             AnyBlockchain::Esplora(inner) => Blockchain::$name(inner, $($args, )* ),
             #[cfg(feature = "compact_filters")]
             AnyBlockchain::CompactFilters(inner) => inner.$name( $($args, )* ),
+            #[cfg(feature = "rpc")]
+            AnyBlockchain::Rpc(inner) => inner.$name( $($args, )* ),
         }
     }
 }
@@ -116,6 +121,10 @@ pub enum AnyBlockchain {
     #[cfg_attr(docsrs, doc(cfg(feature = "compact_filters")))]
     /// Compact filters client
     CompactFilters(compact_filters::CompactFiltersBlockchain),
+    #[cfg(feature = "rpc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "rpc")))]
+    /// RPC client
+    Rpc(rpc::RpcBlockchain),
 }
 
 #[maybe_async]
@@ -157,6 +166,7 @@ impl Blockchain for AnyBlockchain {
 impl_from!(electrum::ElectrumBlockchain, AnyBlockchain, Electrum, #[cfg(feature = "electrum")]);
 impl_from!(esplora::EsploraBlockchain, AnyBlockchain, Esplora, #[cfg(feature = "esplora")]);
 impl_from!(compact_filters::CompactFiltersBlockchain, AnyBlockchain, CompactFilters, #[cfg(feature = "compact_filters")]);
+impl_from!(rpc::RpcBlockchain, AnyBlockchain, Rpc, #[cfg(feature = "rpc")]);
 
 /// Type that can contain any of the blockchain configurations defined by the library
 ///
@@ -206,6 +216,10 @@ pub enum AnyBlockchainConfig {
     #[cfg_attr(docsrs, doc(cfg(feature = "compact_filters")))]
     /// Compact filters client
     CompactFilters(compact_filters::CompactFiltersBlockchainConfig),
+    #[cfg(feature = "rpc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "rpc")))]
+    /// RPC client configuration
+    Rpc(rpc::RpcConfig),
 }
 
 impl ConfigurableBlockchain for AnyBlockchain {
@@ -225,6 +239,10 @@ impl ConfigurableBlockchain for AnyBlockchain {
             AnyBlockchainConfig::CompactFilters(inner) => AnyBlockchain::CompactFilters(
                 compact_filters::CompactFiltersBlockchain::from_config(inner)?,
             ),
+            #[cfg(feature = "rpc")]
+            AnyBlockchainConfig::Rpc(inner) => {
+                AnyBlockchain::Rpc(rpc::RpcBlockchain::from_config(inner)?)
+            }
         })
     }
 }
@@ -232,3 +250,4 @@ impl ConfigurableBlockchain for AnyBlockchain {
 impl_from!(electrum::ElectrumBlockchainConfig, AnyBlockchainConfig, Electrum, #[cfg(feature = "electrum")]);
 impl_from!(esplora::EsploraBlockchainConfig, AnyBlockchainConfig, Esplora, #[cfg(feature = "esplora")]);
 impl_from!(compact_filters::CompactFiltersBlockchainConfig, AnyBlockchainConfig, CompactFilters, #[cfg(feature = "compact_filters")]);
+impl_from!(rpc::RpcConfig, AnyBlockchainConfig, Rpc, #[cfg(feature = "rpc")]);

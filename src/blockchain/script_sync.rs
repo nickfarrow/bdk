@@ -6,11 +6,11 @@ returns associated transactions i.e. electrum.
 use crate::{
     database::{BatchDatabase, BatchOperations, DatabaseUtils},
     wallet::time::Instant,
-    ConfirmationTime, Error, KeychainKind, LocalUtxo, TransactionDetails,
+    BlockTime, Error, KeychainKind, LocalUtxo, TransactionDetails,
 };
 use bitcoin::{OutPoint, Script, Transaction, TxOut, Txid};
 use log::*;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 /// A request for on-chain information
 pub enum Request<'a, D: BatchDatabase> {
@@ -44,8 +44,6 @@ pub fn start<D: BatchDatabase>(db: &D, stop_gap: usize) -> Result<Request<'_, D>
         stop_gap,
         keychain,
         next_keychains: keychains,
-        tx_interested: HashSet::default(),
-        tx_conftime_interested: HashSet::default(),
     }))
 }
 
@@ -56,8 +54,6 @@ pub struct ScriptReq<'a, D: BatchDatabase> {
     stop_gap: usize,
     keychain: KeychainKind,
     next_keychains: Vec<KeychainKind>,
-    tx_interested: HashSet<Txid>,
-    tx_conftime_interested: HashSet<Txid>,
 }
 
 /// The sync starts by returning script pubkeys we are interested in.
@@ -93,22 +89,23 @@ impl<'a, D: BatchDatabase> ScriptReq<'a, D> {
                             (None, Some(_)) => {
                                 // It looks like the tx has confirmed since we last saw it -- we
                                 // need to know the confirmation time.
-                                self.tx_conftime_interested.insert(*txid);
+                                self.state.tx_missing_conftime.insert(*txid, details);
                             }
                             (Some(old_height), Some(new_height)) if old_height != *new_height => {
-                                // The height of the tx has changed !? -- get the confirmation time.
-                                self.tx_conftime_interested.insert(*txid);
+                                // The height of the tx has changed !? -- It's a reorg get the new confirmation time.
+                                self.state.tx_missing_conftime.insert(*txid, details);
                             }
                             (Some(_), None) => {
+                                // A re-org where the tx is not in the chain anymore.
                                 details.confirmation_time = None;
-                                self.state.observed_txs.push(details);
+                                self.state.finished_txs.push(details);
                             }
-                            _ => self.state.observed_txs.push(details),
+                            _ => self.state.finished_txs.push(details),
                         }
                     }
                     None => {
                         // we've never seen it let's get the whole thing
-                        self.tx_interested.insert(*txid);
+                        self.state.tx_needed.insert(*txid);
                     }
                 };
             }
@@ -147,8 +144,6 @@ impl<'a, D: BatchDatabase> ScriptReq<'a, D> {
                         .collect();
                     Request::Script(self)
                 } else {
-                    self.state.conftime_needed = self.tx_conftime_interested.into_iter().collect();
-                    self.state.tx_needed = self.tx_interested.into_iter().collect();
                     Request::Tx(TxReq { state: self.state })
                 }
             } else {
@@ -175,7 +170,7 @@ impl<'a, D: BatchDatabase> TxReq<'a, D> {
         let tx_details: Vec<TransactionDetails> = tx_details
             .into_iter()
             .zip(self.state.tx_needed.iter())
-            .map(|((vin, tx), txid)| {
+            .map(|((vout, tx), txid)| {
                 debug!("found tx_details for {}", txid);
                 assert_eq!(tx.txid(), *txid);
                 let mut sent: u64 = 0;
@@ -183,7 +178,7 @@ impl<'a, D: BatchDatabase> TxReq<'a, D> {
                 let mut inputs_sum: u64 = 0;
                 let mut outputs_sum: u64 = 0;
 
-                for (txout, input) in vin.into_iter().zip(tx.input.iter()) {
+                for (txout, input) in vout.into_iter().zip(tx.input.iter()) {
                     let txout = match txout {
                         Some(txout) => txout,
                         None => {
@@ -225,11 +220,10 @@ impl<'a, D: BatchDatabase> TxReq<'a, D> {
             .collect::<Result<Vec<_>, _>>()?;
 
         for tx_detail in tx_details {
-            self.state.conftime_needed.push_back(tx_detail.txid);
+            self.state.tx_needed.remove(&tx_detail.txid);
             self.state
                 .tx_missing_conftime
                 .insert(tx_detail.txid, tx_detail);
-            self.state.tx_needed.pop_front();
         }
 
         if !self.state.tx_needed.is_empty() {
@@ -247,34 +241,28 @@ pub struct ConftimeReq<'a, D> {
 
 impl<'a, D: BatchDatabase> ConftimeReq<'a, D> {
     pub fn request(&self) -> impl Iterator<Item = &Txid> + Clone {
-        self.state.conftime_needed.iter()
+        self.state.tx_missing_conftime.keys()
     }
 
     pub fn satisfy(
         mut self,
-        confirmation_times: Vec<Option<ConfirmationTime>>,
+        confirmation_times: Vec<Option<BlockTime>>,
     ) -> Result<Request<'a, D>, Error> {
-        let n = confirmation_times.len();
-        let conftime_needed = self.state.conftime_needed.iter();
-        for (confirmation_time, txid) in confirmation_times.into_iter().zip(conftime_needed) {
+        let conftime_needed = self
+            .request()
+            .cloned()
+            .take(confirmation_times.len())
+            .collect::<Vec<_>>();
+        for (confirmation_time, txid) in confirmation_times.into_iter().zip(conftime_needed.iter())
+        {
             debug!("confirmation time for {} was {:?}", txid, confirmation_time);
-            // this is written awkwardly to avoid lifetime issues with using cleaner .or_else
-            let mut tx_details = self.state.tx_missing_conftime.remove(txid);
-            if tx_details.is_none() {
-                tx_details = self.state.db.get_tx(txid, true)?
-            }
-
-            if let Some(mut tx_details) = tx_details {
+            if let Some(mut tx_details) = self.state.tx_missing_conftime.remove(txid) {
                 tx_details.confirmation_time = confirmation_time;
-                self.state.observed_txs.push(tx_details);
+                self.state.finished_txs.push(tx_details);
             }
         }
 
-        for _ in 0..n {
-            self.state.conftime_needed.pop_front();
-        }
-
-        if self.state.conftime_needed.is_empty() {
+        if self.state.tx_missing_conftime.is_empty() {
             Ok(Request::Finish(self.state.into_db_update()?))
         } else {
             Ok(Request::Conftime(self))
@@ -285,10 +273,13 @@ impl<'a, D: BatchDatabase> ConftimeReq<'a, D> {
 struct State<'a, D> {
     db: &'a D,
     last_active_index: HashMap<KeychainKind, usize>,
-    tx_needed: VecDeque<Txid>,
-    conftime_needed: VecDeque<Txid>,
-    observed_txs: Vec<TransactionDetails>,
-    tx_missing_conftime: HashMap<Txid, TransactionDetails>,
+    /// Transactions where we need to get the full details
+    tx_needed: BTreeSet<Txid>,
+    /// Transacitions that we know everything about
+    finished_txs: Vec<TransactionDetails>,
+    /// Transactions that discovered conftimes should be inserted into
+    tx_missing_conftime: BTreeMap<Txid, TransactionDetails>,
+    /// The start of the sync
     start_time: Instant,
 }
 
@@ -297,23 +288,18 @@ impl<'a, D: BatchDatabase> State<'a, D> {
         State {
             db,
             last_active_index: HashMap::default(),
-            conftime_needed: VecDeque::default(),
-            observed_txs: vec![],
-            tx_needed: VecDeque::default(),
-            tx_missing_conftime: HashMap::default(),
+            finished_txs: vec![],
+            tx_needed: BTreeSet::default(),
+            tx_missing_conftime: BTreeMap::default(),
             start_time: Instant::new(),
         }
     }
     fn into_db_update(self) -> Result<D::Batch, Error> {
-        debug_assert!(
-            self.tx_needed.is_empty()
-                && self.tx_missing_conftime.is_empty()
-                && self.conftime_needed.is_empty()
-        );
+        debug_assert!(self.tx_needed.is_empty() && self.tx_missing_conftime.is_empty());
         let existing_txs = self.db.iter_txs(false)?;
         let existing_txids: HashSet<Txid> = existing_txs.iter().map(|tx| tx.txid).collect();
-        let observed_txs = make_txs_consistent(&self.observed_txs);
-        let observed_txids: HashSet<Txid> = observed_txs.iter().map(|tx| tx.txid).collect();
+        let finished_txs = make_txs_consistent(&self.finished_txs);
+        let observed_txids: HashSet<Txid> = finished_txs.iter().map(|tx| tx.txid).collect();
         let txids_to_delete = existing_txids.difference(&observed_txids);
         let mut batch = self.db.begin_batch();
 
@@ -334,8 +320,8 @@ impl<'a, D: BatchDatabase> State<'a, D> {
         }
 
         // Set every tx we observed
-        for observed_tx in &observed_txs {
-            let tx = observed_tx
+        for finished_tx in &finished_txs {
+            let tx = finished_tx
                 .transaction
                 .as_ref()
                 .expect("transaction will always be present here");
@@ -346,7 +332,7 @@ impl<'a, D: BatchDatabase> State<'a, D> {
                     // add utxos we own from the new transactions we've seen.
                     batch.set_utxo(&LocalUtxo {
                         outpoint: OutPoint {
-                            txid: observed_tx.txid,
+                            txid: finished_tx.txid,
                             vout: i as u32,
                         },
                         txout: output.clone(),
@@ -354,13 +340,13 @@ impl<'a, D: BatchDatabase> State<'a, D> {
                     })?;
                 }
             }
-            batch.set_tx(observed_tx)?;
+            batch.set_tx(finished_tx)?;
         }
 
         // we don't do this in the loop above since we may want to delete some of the utxos we
         // just added in case there are new tranasactions that spend form each other.
-        for observed_tx in &observed_txs {
-            let tx = observed_tx
+        for finished_tx in &finished_txs {
+            let tx = finished_tx
                 .transaction
                 .as_ref()
                 .expect("transaction will always be present here");

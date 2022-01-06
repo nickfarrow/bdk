@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::{BlockHash, BlockHeader, Script, Transaction, Txid};
+use bitcoin::{BlockHeader, Script, Transaction, Txid};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace};
@@ -24,14 +24,12 @@ use log::{debug, error, info, trace};
 use ::reqwest::{Client, StatusCode};
 use futures::stream::{FuturesOrdered, TryStreamExt};
 
-use super::responses::{Tx, TxStatus};
+use super::api::Tx;
 use crate::blockchain::esplora::EsploraError;
 use crate::blockchain::*;
 use crate::database::BatchDatabase;
 use crate::error::Error;
 use crate::FeeRate;
-
-const DEFAULT_CONCURRENT_REQUESTS: u8 = 4;
 
 #[derive(Debug)]
 struct UrlClient {
@@ -68,7 +66,7 @@ impl EsploraBlockchain {
             url_client: UrlClient {
                 url: base_url.to_string(),
                 client: Client::new(),
-                concurrency: DEFAULT_CONCURRENT_REQUESTS,
+                concurrency: super::DEFAULT_CONCURRENT_REQUESTS,
             },
             stop_gap,
         }
@@ -112,64 +110,33 @@ impl Blockchain for EsploraBlockchain {
                             let mut related_txs: Vec<Tx> =
                                 self.url_client._scripthash_txs(script, None).await?;
 
-                            let mut confirmed = vec![];
-                            related_txs.retain(|tx| match tx.status {
-                                TxStatus {
-                                    confirmed: true,
-                                    block_height: Some(_),
-                                    block_time: Some(_),
-                                } => {
-                                    confirmed.push(tx.clone());
-                                    false
-                                }
-                                _ => true,
-                            });
-                            let unconfirmed = related_txs;
-
-                            if confirmed.len() >= 25 {
+                            let n_confirmed =
+                                related_txs.iter().filter(|tx| tx.status.confirmed).count();
+                            // esplora pages on 25 confirmed transactions. If there's 25 or more we
+                            // keep requesting to see if there's more.
+                            if n_confirmed >= 25 {
                                 loop {
-                                    let related_txs: Vec<Tx> = self
+                                    let new_related_txs: Vec<Tx> = self
                                         .url_client
                                         ._scripthash_txs(
                                             script,
-                                            Some(confirmed.last().unwrap().txid),
+                                            Some(related_txs.last().unwrap().txid),
                                         )
                                         .await?;
-                                    let n = related_txs.len();
-
-                                    let related_confirmed_txs = related_txs
-                                        .into_iter()
-                                        .filter_map(|tx| match tx.status {
-                                            TxStatus {
-                                                confirmed: true,
-                                                block_height: Some(_),
-                                                block_time: Some(_),
-                                            } => Some(tx),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>();
-
-                                    debug_assert_eq!(
-                                        related_confirmed_txs.len(),
-                                        n,
-                                        "all of them should be confirmed since it comes from /chain"
-                                    );
-
-                                    confirmed.extend(related_confirmed_txs);
-
+                                    let n = new_related_txs.len();
+                                    related_txs.extend(new_related_txs);
+                                    // we've reached the end
                                     if n < 25 {
                                         break;
                                     }
                                 }
                             }
-
-                            Result::<_, Error>::Ok(
-                                confirmed.into_iter().chain(unconfirmed).collect::<Vec<_>>(),
-                            )
+                            Result::<_, Error>::Ok(related_txs)
                         })
                         .collect();
-                    let mut satisfaction = vec![];
                     let txs_per_script: Vec<Vec<Tx>> = await_or_block!(futures.try_collect())?;
+                    let mut satisfaction = vec![];
+
                     for txs in txs_per_script {
                         satisfaction.push(
                             txs.iter()
@@ -180,10 +147,11 @@ impl Blockchain for EsploraBlockchain {
                             tx_index.insert(tx.txid, tx);
                         }
                     }
+
                     script_req.satisfy(satisfaction)?
                 }
-                Request::Conftime(conftimereq) => {
-                    let conftimes = conftimereq
+                Request::Conftime(conftime_req) => {
+                    let conftimes = conftime_req
                         .request()
                         .map(|txid| {
                             tx_index
@@ -192,17 +160,17 @@ impl Blockchain for EsploraBlockchain {
                                 .confirmation_time()
                         })
                         .collect();
-                    conftimereq.satisfy(conftimes)?
+                    conftime_req.satisfy(conftimes)?
                 }
-                Request::Tx(txreq) => {
-                    let full_txs = txreq
+                Request::Tx(tx_req) => {
+                    let full_txs = tx_req
                         .request()
                         .map(|txid| {
                             let tx = tx_index.get(txid).expect("must be in index");
-                            (tx.confirmation_time(), tx.previous_outputs(), tx.to_tx())
+                            (tx.previous_outputs(), tx.to_tx())
                         })
                         .collect();
-                    txreq.satisfy(full_txs)?
+                    tx_req.satisfy(full_txs)?
                 }
                 Request::Finish(batch_update) => break batch_update,
             }
@@ -307,8 +275,11 @@ impl UrlClient {
     ) -> Result<Vec<Tx>, EsploraError> {
         let script_hash = sha256::Hash::hash(script.as_bytes()).into_inner().to_hex();
         let url = match last_seen {
-            Some(last_seen) => format!("{}/scripthash/{}/txs/chain/{}", self.url, script_hash, last_seen),
-            None => format!("{}/scripthash/{}/txs/chain", self.url, script_hash),
+            Some(last_seen) => format!(
+                "{}/scripthash/{}/txs/chain/{}",
+                self.url, script_hash, last_seen
+            ),
+            None => format!("{}/scripthash/{}/txs", self.url, script_hash),
         };
         Ok(self
             .client
@@ -330,174 +301,10 @@ impl UrlClient {
             .json::<HashMap<String, f64>>()
             .await?)
     }
-
-    async fn _tx_state(
-        &self,
-        inputs: &[OutPoint],
-        target_txid: Txid,
-    ) -> Result<TxState, EsploraError> {
-        #[derive(serde::Deserialize, Debug)]
-        struct OutSpend {
-            spent: bool,
-            txid: Option<Txid>,
-            vin: Option<u32>,
-            status: Option<Status>,
-        }
-        #[derive(serde::Deserialize, Debug)]
-        struct Status {
-            confirmed: bool,
-            block_height: Option<u32>,
-            block_hash: Option<BlockHash>,
-        }
-
-        let mut state = TxState::NotFound;
-
-        for (i, input) in inputs.iter().enumerate() {
-            let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
-            let outspend = self
-                .client
-                .get(&url)
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<OutSpend>()
-                .await?;
-
-            if let OutSpend {
-                txid: Some(txid),
-                vin: Some(vin),
-                status: Some(status),
-                ..
-            } = outspend
-            {
-                if txid == target_txid {
-                    // If the node is telling us the input has been spent to the tx we're looking
-                    // for then we can just exit.
-                    return Ok(TxState::Present {
-                        height: status.block_height,
-                    });
-                } else {
-                    let existing_conflict_height = match state {
-                        TxState::Conflict { height, .. } => height,
-                        _ => None,
-                    };
-                    match (status.block_height, existing_conflict_height) {
-                        (None, Some(_)) => {}
-                        (Some(conflict_height), Some(existing_conflict_height))
-                            if conflict_height > existing_conflict_height => {}
-                        // overwrite unless the existing conflict is deeper in the chain
-                        _ => {
-                            state = TxState::Conflict {
-                                txid,
-                                vin,
-                                vin_target: i as u32,
-                                height: status.block_height,
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(state)
-    }
-
-    async fn _input_state(&self, inputs: &[OutPoint]) -> Result<InputState, EsploraError> {
-        #[derive(serde::Deserialize, Debug)]
-        struct OutSpend {
-            spent: bool,
-            txid: Option<Txid>,
-            vin: Option<u32>,
-            status: Option<Status>,
-        }
-        #[derive(serde::Deserialize, Debug)]
-        struct Status {
-            confirmed: bool,
-            block_height: Option<u32>,
-            block_hash: Option<BlockHash>,
-        }
-
-        let mut state = InputState::Unspent;
-
-        for (i, input) in inputs.iter().enumerate() {
-            let url = format!("{}/tx/{}/outspend/{}", self.url, input.txid, input.vout);
-            let outspend = self
-                .client
-                .get(&url)
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<OutSpend>()
-                .await?;
-
-            if let OutSpend {
-                txid: Some(txid),
-                vin: Some(vin),
-                status: Some(status),
-                ..
-            } = outspend
-            {
-                let existing_spend_height = match state {
-                    InputState::Spent { height, .. } => height,
-                    _ => None,
-                };
-
-                match (status.block_height, existing_spend_height) {
-                    (None, Some(_)) => {}
-                    (Some(spend_height), Some(existing_spend_height))
-                        if spend_height > existing_spend_height => {}
-                    _ => {
-                        state = InputState::Spent {
-                            index: i as u32,
-                            txid,
-                            vin,
-                            height: status.block_height,
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(state)
-    }
-}
-
-#[maybe_async]
-impl Broadcast for EsploraBlockchain {
-    fn broadcast(&self, transaction: Transaction) -> Result<(), BroadcastError> {
-        let url = format!("{}/tx", self.url_client.url);
-
-        let res = await_or_block!(self
-            .url_client
-            .client
-            .post(&url)
-            .body(serialize(&transaction).to_hex())
-            .send())
-        .map_err(|_| BroadcastError::Http {
-            status: None,
-            url: url.clone(),
-        })?;
-
-        let http_error = BroadcastError::Http {
-            status: Some(res.status().into()),
-            url,
-        };
-
-        if res.status().is_client_error() {
-            let text = await_or_block!(res.text()).map_err(|_| http_error.clone())?;
-            Err(BroadcastTxError::from_core_rpc_response(&text)
-                .map(BroadcastError::Tx)
-                .unwrap_or(http_error))
-        } else if res.status().is_server_error() {
-            Err(http_error)
-        } else {
-            Ok(())
-        }
-    }
 }
 
 impl ConfigurableBlockchain for EsploraBlockchain {
-    type Config = EsploraBlockchainConfig;
+    type Config = super::EsploraBlockchainConfig;
 
     fn from_config(config: &Self::Config) -> Result<Self, Error> {
         let map_e = |e: reqwest::Error| Error::Esplora(Box::new(e.into()));
@@ -506,27 +313,19 @@ impl ConfigurableBlockchain for EsploraBlockchain {
         if let Some(concurrency) = config.concurrency {
             blockchain.url_client.concurrency = concurrency;
         }
+        let mut builder = Client::builder();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(proxy) = &config.proxy {
-            blockchain.url_client.client = Client::builder()
-                .proxy(reqwest::Proxy::all(proxy).map_err(map_e)?)
-                .build()
-                .map_err(map_e)?;
+            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(map_e)?);
         }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(timeout) = config.timeout {
+            builder = builder.timeout(core::time::Duration::from_secs(timeout));
+        }
+
+        blockchain.url_client.client = builder.build().map_err(map_e)?;
+
         Ok(blockchain)
-    }
-}
-
-#[maybe_async]
-impl TransactionState for EsploraBlockchain {
-    fn tx_input_state(&self, inputs: &[OutPoint], txid: Txid) -> Result<TxState, Error> {
-        Ok(await_or_block!(self.url_client._tx_state(inputs, txid))?)
-    }
-}
-
-#[maybe_async]
-impl GetInputState for EsploraBlockchain {
-    fn input_state(&self, inputs: &[OutPoint]) -> Result<InputState, Error> {
-        Ok(await_or_block!(self.url_client._input_state(inputs))?)
     }
 }

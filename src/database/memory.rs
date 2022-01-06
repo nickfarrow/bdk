@@ -14,6 +14,7 @@
 //! This module defines an in-memory database type called [`MemoryDatabase`] that is based on a
 //! [`BTreeMap`].
 
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::ops::Bound::{Excluded, Included};
 
@@ -21,7 +22,7 @@ use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hash_types::Txid;
 use bitcoin::{OutPoint, Script, Transaction};
 
-use crate::database::{BatchDatabase, BatchOperations, ConfigurableDatabase, Database};
+use crate::database::{BatchDatabase, BatchOperations, ConfigurableDatabase, Database, SyncTime};
 use crate::error::Error;
 use crate::types::*;
 
@@ -32,6 +33,7 @@ use crate::types::*;
 // transactions         t<txid> -> tx details
 // deriv indexes        c{i,e} -> u32
 // descriptor checksum  d{i,e} -> vec<u8>
+// last sync time       l -> { height, timestamp }
 
 pub(crate) enum MapKey<'a> {
     Path((Option<KeychainKind>, Option<u32>)),
@@ -40,6 +42,7 @@ pub(crate) enum MapKey<'a> {
     RawTx(Option<&'a Txid>),
     Transaction(Option<&'a Txid>),
     LastIndex(KeychainKind),
+    SyncTime,
     DescriptorChecksum(KeychainKind),
 }
 
@@ -58,6 +61,7 @@ impl MapKey<'_> {
             MapKey::RawTx(_) => b"r".to_vec(),
             MapKey::Transaction(_) => b"t".to_vec(),
             MapKey::LastIndex(st) => [b"c", st.as_ref()].concat(),
+            MapKey::SyncTime => b"l".to_vec(),
             MapKey::DescriptorChecksum(st) => [b"d", st.as_ref()].concat(),
         }
     }
@@ -105,12 +109,12 @@ fn after(key: &[u8]) -> Vec<u8> {
 /// Once it's dropped its content will be lost.
 ///
 /// If you are looking for a permanent storage solution, you can try with the default key-value
-/// database called [`sled`]. See the [`database`] module documentation for more defailts.
+/// database called [`sled`]. See the [`database`] module documentation for more details.
 ///
 /// [`database`]: crate::database
 #[derive(Debug, Default)]
 pub struct MemoryDatabase {
-    map: BTreeMap<Vec<u8>, Box<dyn std::any::Any>>,
+    map: BTreeMap<Vec<u8>, Box<dyn Any + Send + Sync>>,
     deleted_keys: Vec<Vec<u8>>,
 }
 
@@ -176,6 +180,12 @@ impl BatchOperations for MemoryDatabase {
     fn set_last_index(&mut self, keychain: KeychainKind, value: u32) -> Result<(), Error> {
         let key = MapKey::LastIndex(keychain).as_map_key();
         self.map.insert(key, Box::new(value));
+
+        Ok(())
+    }
+    fn set_sync_time(&mut self, data: SyncTime) -> Result<(), Error> {
+        let key = MapKey::SyncTime.as_map_key();
+        self.map.insert(key, Box::new(data));
 
         Ok(())
     }
@@ -268,6 +278,13 @@ impl BatchOperations for MemoryDatabase {
             None => Ok(None),
             Some(b) => Ok(Some(*b.downcast_ref().unwrap())),
         }
+    }
+    fn del_sync_time(&mut self) -> Result<Option<SyncTime>, Error> {
+        let key = MapKey::SyncTime.as_map_key();
+        let res = self.map.remove(&key);
+        self.deleted_keys.push(key);
+
+        Ok(res.map(|b| b.downcast_ref().cloned().unwrap()))
     }
 }
 
@@ -406,6 +423,14 @@ impl Database for MemoryDatabase {
         Ok(self.map.get(&key).map(|b| *b.downcast_ref().unwrap()))
     }
 
+    fn get_sync_time(&self) -> Result<Option<SyncTime>, Error> {
+        let key = MapKey::SyncTime.as_map_key();
+        Ok(self
+            .map
+            .get(&key)
+            .map(|b| b.downcast_ref().cloned().unwrap()))
+    }
+
     // inserts 0 if not present
     fn increment_last_index(&mut self, keychain: KeychainKind) -> Result<u32, Error> {
         let key = MapKey::LastIndex(keychain).as_map_key();
@@ -418,6 +443,10 @@ impl Database for MemoryDatabase {
             .unwrap();
 
         Ok(*value)
+    }
+
+    fn flush(&mut self) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -452,20 +481,21 @@ impl ConfigurableDatabase for MemoryDatabase {
 /// don't have `test` set.
 macro_rules! populate_test_db {
     ($db:expr, $tx_meta:expr, $current_height:expr$(,)?) => {{
+        use std::str::FromStr;
         use $crate::database::BatchOperations;
         let mut db = $db;
         let tx_meta = $tx_meta;
         let current_height: Option<u32> = $current_height;
-        let tx = Transaction {
+        let tx = $crate::bitcoin::Transaction {
             version: 1,
             lock_time: 0,
             input: vec![],
             output: tx_meta
                 .output
                 .iter()
-                .map(|out_meta| bitcoin::TxOut {
+                .map(|out_meta| $crate::bitcoin::TxOut {
                     value: out_meta.value,
-                    script_pubkey: bitcoin::Address::from_str(&out_meta.to_address)
+                    script_pubkey: $crate::bitcoin::Address::from_str(&out_meta.to_address)
                         .unwrap()
                         .script_pubkey(),
                 })
@@ -473,12 +503,12 @@ macro_rules! populate_test_db {
         };
 
         let txid = tx.txid();
-        let confirmation_time = tx_meta.min_confirmations.map(|conf| ConfirmationTime {
+        let confirmation_time = tx_meta.min_confirmations.map(|conf| $crate::BlockTime {
             height: current_height.unwrap().checked_sub(conf as u32).unwrap(),
             timestamp: 0,
         });
 
-        let tx_details = TransactionDetails {
+        let tx_details = $crate::TransactionDetails {
             transaction: Some(tx.clone()),
             txid,
             fee: Some(0),
@@ -490,13 +520,13 @@ macro_rules! populate_test_db {
 
         db.set_tx(&tx_details).unwrap();
         for (vout, out) in tx.output.iter().enumerate() {
-            db.set_utxo(&LocalUtxo {
+            db.set_utxo(&$crate::LocalUtxo {
                 txout: out.clone(),
-                outpoint: OutPoint {
+                outpoint: $crate::bitcoin::OutPoint {
                     txid,
                     vout: vout as u32,
                 },
-                keychain: KeychainKind::External,
+                keychain: $crate::KeychainKind::External,
             })
             .unwrap();
         }
@@ -581,5 +611,10 @@ mod test {
     #[test]
     fn test_last_index() {
         crate::database::test::test_last_index(get_tree());
+    }
+
+    #[test]
+    fn test_sync_time() {
+        crate::database::test::test_sync_time(get_tree());
     }
 }

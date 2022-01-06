@@ -238,13 +238,13 @@ pub(crate) fn into_wallet_descriptor_checked<T: IntoWalletDescriptor>(
 #[doc(hidden)]
 /// Used internally mainly by the `descriptor!()` and `fragment!()` macros
 pub trait CheckMiniscript<Ctx: miniscript::ScriptContext> {
-    fn check_minsicript(&self) -> Result<(), miniscript::Error>;
+    fn check_miniscript(&self) -> Result<(), miniscript::Error>;
 }
 
 impl<Ctx: miniscript::ScriptContext, Pk: miniscript::MiniscriptKey> CheckMiniscript<Ctx>
     for miniscript::Miniscript<Pk, Ctx>
 {
-    fn check_minsicript(&self) -> Result<(), miniscript::Error> {
+    fn check_miniscript(&self) -> Result<(), miniscript::Error> {
         Ctx::check_global_validity(self)?;
 
         Ok(())
@@ -667,7 +667,7 @@ mod test {
 
         // make a descriptor out of it
         let desc = crate::descriptor!(wpkh(key)).unwrap();
-        // this should conver the key that supports "any_network" to the right network (testnet)
+        // this should convert the key that supports "any_network" to the right network (testnet)
         let (wallet_desc, _) = desc
             .into_wallet_descriptor(&secp, Network::Testnet)
             .unwrap();

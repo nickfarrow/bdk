@@ -10,6 +10,7 @@
 // licenses.
 
 use std::convert::AsRef;
+use std::ops::Sub;
 
 use bitcoin::blockdata::transaction::{OutPoint, Transaction, TxOut};
 use bitcoin::{hash_types::Txid, util::psbt};
@@ -65,15 +66,57 @@ impl FeeRate {
         FeeRate(1.0)
     }
 
+    /// Calculate fee rate from `fee` and weight units (`wu`).
+    pub fn from_wu(fee: u64, wu: usize) -> FeeRate {
+        Self::from_vb(fee, wu.vbytes())
+    }
+
+    /// Calculate fee rate from `fee` and `vbytes`.
+    pub fn from_vb(fee: u64, vbytes: usize) -> FeeRate {
+        let rate = fee as f32 / vbytes as f32;
+        Self::from_sat_per_vb(rate)
+    }
+
     /// Return the value as satoshi/vbyte
     pub fn as_sat_vb(&self) -> f32 {
         self.0
+    }
+
+    /// Calculate absolute fee in Satoshis using size in weight units.
+    pub fn fee_wu(&self, wu: usize) -> u64 {
+        self.fee_vb(wu.vbytes())
+    }
+
+    /// Calculate absolute fee in Satoshis using size in virtual bytes.
+    pub fn fee_vb(&self, vbytes: usize) -> u64 {
+        (self.as_sat_vb() * vbytes as f32).ceil() as u64
     }
 }
 
 impl std::default::Default for FeeRate {
     fn default() -> Self {
         FeeRate::default_min_relay_fee()
+    }
+}
+
+impl Sub for FeeRate {
+    type Output = Self;
+
+    fn sub(self, other: FeeRate) -> Self::Output {
+        FeeRate(self.0 - other.0)
+    }
+}
+
+/// Trait implemented by types that can be used to measure weight units.
+pub trait Vbytes {
+    /// Convert weight units to virtual bytes.
+    fn vbytes(self) -> usize;
+}
+
+impl Vbytes for usize {
+    fn vbytes(self) -> usize {
+        // ref: https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki#transaction-size-calculations
+        (self as f32 / 4.0).ceil() as usize
     }
 }
 
@@ -167,32 +210,38 @@ pub struct TransactionDetails {
     pub fee: Option<u64>,
     /// If the transaction is confirmed, contains height and timestamp of the block containing the
     /// transaction, unconfirmed transaction contains `None`.
-    pub confirmation_time: Option<ConfirmationTime>,
+    pub confirmation_time: Option<BlockTime>,
     /// Whether the tx has been verified against the consensus rules
     ///
     /// Confirmed txs are considered "verified" by default, while unconfirmed txs are checked to
     /// ensure an unstrusted [`Blockchain`](crate::blockchain::Blockchain) backend can't trick the
     /// wallet into using an invalid tx as an RBF template.
     ///
-    /// The check is only perfomed when the `verify` feature is enabled.
+    /// The check is only performed when the `verify` feature is enabled.
     #[serde(default = "bool::default")] // default to `false` if not specified
     pub verified: bool,
 }
 
-/// Block height and timestamp of the block containing the confirmed transaction
+/// Block height and timestamp of a block
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
-pub struct ConfirmationTime {
+pub struct BlockTime {
     /// confirmation block height
     pub height: u32,
     /// confirmation block timestamp
     pub timestamp: u64,
 }
 
-impl ConfirmationTime {
-    /// Returns `Some` `ConfirmationTime` if both `height` and `timestamp` are `Some`
+/// **DEPRECATED**: Confirmation time of a transaction
+///
+/// The structure has been renamed to `BlockTime`
+#[deprecated(note = "This structure has been renamed to `BlockTime`")]
+pub type ConfirmationTime = BlockTime;
+
+impl BlockTime {
+    /// Returns `Some` `BlockTime` if both `height` and `timestamp` are `Some`
     pub fn new(height: Option<u32>, timestamp: Option<u64>) -> Option<Self> {
         match (height, timestamp) {
-            (Some(height), Some(timestamp)) => Some(ConfirmationTime { height, timestamp }),
+            (Some(height), Some(timestamp)) => Some(BlockTime { height, timestamp }),
             _ => None,
         }
     }

@@ -24,17 +24,14 @@ use ureq::{Agent, Proxy, Response};
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::{BlockHash, BlockHeader, Script, Transaction, Txid};
+use bitcoin::{BlockHeader, Script, Transaction, Txid};
 
-use super::responses::Tx;
-use super::EsploraBlockchainConfig;
+use super::api::Tx;
 use crate::blockchain::esplora::EsploraError;
 use crate::blockchain::*;
 use crate::database::BatchDatabase;
 use crate::error::Error;
 use crate::FeeRate;
-
-const DEFAULT_CONCURRENT_REQUESTS: u8 = 4;
 
 #[derive(Debug, Clone)]
 struct UrlClient {
@@ -61,8 +58,8 @@ impl EsploraBlockchain {
                 url: base_url.to_string(),
                 agent: Agent::new(),
             },
+            concurrency: super::DEFAULT_CONCURRENT_REQUESTS,
             stop_gap,
-            concurrency: DEFAULT_CONCURRENT_REQUESTS,
         }
     }
 
@@ -72,7 +69,7 @@ impl EsploraBlockchain {
         self
     }
 
-    /// Make thsi number of parallel requests
+    /// Set the number of parallel requests the client can make.
     pub fn with_concurrency(mut self, concurrency: u8) -> Self {
         self.concurrency = concurrency;
         self
@@ -114,8 +111,8 @@ impl Blockchain for EsploraBlockchain {
 
                             let n_confirmed =
                                 related_txs.iter().filter(|tx| tx.status.confirmed).count();
-                            // esplora pages on 25 confirmed transactions. If there's more than
-                            // 25 we need to keep requesting.
+                            // esplora pages on 25 confirmed transactions. If there's 25 or more we
+                            // keep requesting to see if there's more.
                             if n_confirmed >= 25 {
                                 loop {
                                     let new_related_txs: Vec<Tx> = client._scripthash_txs(
@@ -257,28 +254,46 @@ impl UrlClient {
     }
 
     fn _broadcast(&self, transaction: &Transaction) -> Result<(), EsploraError> {
-        self.agent
+        let resp = self
+            .agent
             .post(&format!("{}/tx", self.url))
-            .send_string(&serialize(transaction).to_hex())?;
-        Ok(())
+            .send_string(&serialize(transaction).to_hex());
+
+        match resp {
+            Ok(_) => Ok(()), // We do not return the txid?
+            Err(ureq::Error::Status(code, _)) => Err(EsploraError::HttpResponse(code)),
+            Err(e) => Err(EsploraError::Ureq(e)),
+        }
     }
 
     fn _get_height(&self) -> Result<u32, EsploraError> {
         let resp = self
             .agent
             .get(&format!("{}/blocks/tip/height", self.url))
-            .call()?;
+            .call();
 
-        Ok(resp.into_string()?.parse()?)
+        match resp {
+            Ok(resp) => Ok(resp.into_string()?.parse()?),
+            Err(ureq::Error::Status(code, _)) => Err(EsploraError::HttpResponse(code)),
+            Err(e) => Err(EsploraError::Ureq(e)),
+        }
     }
 
     fn _get_fee_estimates(&self) -> Result<HashMap<String, f64>, EsploraError> {
         let resp = self
             .agent
             .get(&format!("{}/fee-estimates", self.url,))
-            .call()?;
+            .call();
 
-        let map: HashMap<String, f64> = resp.into_json()?;
+        let map = match resp {
+            Ok(resp) => {
+                let map: HashMap<String, f64> = resp.into_json()?;
+                Ok(map)
+            }
+            Err(ureq::Error::Status(code, _)) => Err(EsploraError::HttpResponse(code)),
+            Err(e) => Err(EsploraError::Ureq(e)),
+        }?;
+
         Ok(map)
     }
 
@@ -289,7 +304,10 @@ impl UrlClient {
     ) -> Result<Vec<Tx>, EsploraError> {
         let script_hash = sha256::Hash::hash(script.as_bytes()).into_inner().to_hex();
         let url = match last_seen {
-            Some(last_seen) => format!("{}/scripthash/{}/txs/{}", self.url, script_hash, last_seen),
+            Some(last_seen) => format!(
+                "{}/scripthash/{}/txs/chain/{}",
+                self.url, script_hash, last_seen
+            ),
             None => format!("{}/scripthash/{}/txs", self.url, script_hash),
         };
         Ok(self.agent.get(&url).call()?.into_json()?)
@@ -298,16 +316,13 @@ impl UrlClient {
     fn _tx_state(&self, inputs: &[OutPoint], target_txid: Txid) -> Result<TxState, EsploraError> {
         #[derive(serde::Deserialize, Debug)]
         struct OutSpend {
-            spent: bool,
             txid: Option<Txid>,
             vin: Option<u32>,
             status: Option<Status>,
         }
         #[derive(serde::Deserialize, Debug)]
         struct Status {
-            confirmed: bool,
             block_height: Option<u32>,
-            block_hash: Option<BlockHash>,
         }
 
         let mut state = TxState::NotFound;
@@ -358,16 +373,13 @@ impl UrlClient {
     fn _input_state(&self, inputs: &[OutPoint]) -> Result<InputState, EsploraError> {
         #[derive(serde::Deserialize, Debug)]
         struct OutSpend {
-            spent: bool,
             txid: Option<Txid>,
             vin: Option<u32>,
             status: Option<Status>,
         }
         #[derive(serde::Deserialize, Debug)]
         struct Status {
-            confirmed: bool,
             block_height: Option<u32>,
-            block_hash: Option<BlockHash>,
         }
 
         let mut state = InputState::Unspent;
@@ -430,13 +442,13 @@ fn into_bytes(resp: Response) -> Result<Vec<u8>, io::Error> {
 }
 
 impl ConfigurableBlockchain for EsploraBlockchain {
-    type Config = EsploraBlockchainConfig;
+    type Config = super::EsploraBlockchainConfig;
 
     fn from_config(config: &Self::Config) -> Result<Self, Error> {
         let mut agent_builder = ureq::AgentBuilder::new();
 
         if let Some(timeout) = config.timeout {
-            agent_builder = agent_builder.timeout(Duration::from_secs(timeout))
+            agent_builder = agent_builder.timeout(Duration::from_secs(timeout));
         }
 
         if let Some(proxy) = &config.proxy {

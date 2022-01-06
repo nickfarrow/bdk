@@ -84,7 +84,7 @@ macro_rules! impl_leaf_opcode {
         )
         .map_err($crate::descriptor::DescriptorError::Miniscript)
         .and_then(|minisc| {
-            minisc.check_minsicript()?;
+            minisc.check_miniscript()?;
             Ok(minisc)
         })
         .map(|minisc| {
@@ -108,7 +108,7 @@ macro_rules! impl_leaf_opcode_value {
         )
         .map_err($crate::descriptor::DescriptorError::Miniscript)
         .and_then(|minisc| {
-            minisc.check_minsicript()?;
+            minisc.check_miniscript()?;
             Ok(minisc)
         })
         .map(|minisc| {
@@ -132,7 +132,7 @@ macro_rules! impl_leaf_opcode_value_two {
         )
         .map_err($crate::descriptor::DescriptorError::Miniscript)
         .and_then(|minisc| {
-            minisc.check_minsicript()?;
+            minisc.check_miniscript()?;
             Ok(minisc)
         })
         .map(|minisc| {
@@ -165,7 +165,7 @@ macro_rules! impl_node_opcode_two {
                     std::sync::Arc::new(b_minisc),
                 ))?;
 
-                minisc.check_minsicript()?;
+                minisc.check_miniscript()?;
 
                 Ok((minisc, a_keymap, $crate::keys::merge_networks(&a_networks, &b_networks)))
             })
@@ -197,7 +197,7 @@ macro_rules! impl_node_opcode_three {
                     std::sync::Arc::new(c_minisc),
                 ))?;
 
-                minisc.check_minsicript()?;
+                minisc.check_miniscript()?;
 
                 Ok((minisc, a_keymap, networks))
             })
@@ -243,7 +243,7 @@ macro_rules! apply_modifier {
                     ),
                 )?;
 
-                minisc.check_minsicript()?;
+                minisc.check_miniscript()?;
 
                 Ok((minisc, keymap, networks))
             })
@@ -521,7 +521,7 @@ macro_rules! fragment_internal {
     // three operands it's (X, (X, (X, ()))), etc.
     //
     // To check that the right number of arguments has been passed we can "cast" those tuples to
-    // more convenient structures like `TupleTwo`. If the conversion succedes, the right number of
+    // more convenient structures like `TupleTwo`. If the conversion succeeds, the right number of
     // args was passed. Otherwise the compilation fails entirely.
     ( @t $op:ident ( $( $args:tt )* ) $( $tail:tt )* ) => ({
         ($crate::fragment!( $op ( $( $args )* ) ), $crate::fragment_internal!( @t $( $tail )* ))
@@ -571,8 +571,9 @@ macro_rules! fragment {
     ( pk ( $key:expr ) ) => ({
         $crate::fragment!(c:pk_k ( $key ))
     });
-    ( pk_h ( $key_hash:expr ) ) => ({
-        $crate::impl_leaf_opcode_value!(PkH, $key_hash)
+    ( pk_h ( $key:expr ) ) => ({
+        let secp = $crate::bitcoin::secp256k1::Secp256k1::new();
+        $crate::keys::make_pkh($key, &secp)
     });
     ( after ( $value:expr ) ) => ({
         $crate::impl_leaf_opcode_value!(After, $value)
@@ -599,6 +600,9 @@ macro_rules! fragment {
         $crate::impl_node_opcode_two!(AndB, $( $inner )*)
     });
     ( and_or ( $( $inner:tt )* ) ) => ({
+        $crate::impl_node_opcode_three!(AndOr, $( $inner )*)
+    });
+    ( andor ( $( $inner:tt )* ) ) => ({
         $crate::impl_node_opcode_three!(AndOr, $( $inner )*)
     });
     ( or_b ( $( $inner:tt )* ) ) => ({

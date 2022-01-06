@@ -27,10 +27,19 @@ use bitcoin::{BlockHash, Txid};
 use crate::error::Error;
 use crate::FeeRate;
 
+#[cfg(feature = "reqwest")]
+mod reqwest;
+
+#[cfg(feature = "reqwest")]
+pub use self::reqwest::*;
+
+#[cfg(feature = "ureq")]
 mod ureq;
+
+#[cfg(feature = "ureq")]
 pub use self::ureq::*;
 
-mod responses;
+mod api;
 
 fn into_fee_rate(target: usize, estimates: HashMap<String, f64>) -> Result<FeeRate, Error> {
     let fee_val = {
@@ -118,12 +127,12 @@ pub struct EsploraBlockchainConfig {
 
 impl EsploraBlockchainConfig {
     /// create a config with default values given the base url and stop gap
-    pub fn new(base_url: String) -> Self {
+    pub fn new(base_url: String, stop_gap: usize) -> Self {
         Self {
             base_url,
             proxy: None,
             timeout: None,
-            stop_gap: 20,
+            stop_gap,
             concurrency: None,
         }
     }
@@ -145,5 +154,59 @@ impl_error!(bitcoin::hashes::hex::Error, Hex, EsploraError);
 crate::bdk_blockchain_tests! {
     fn test_instance(test_client: &TestClient) -> EsploraBlockchain {
         EsploraBlockchain::new(&format!("http://{}",test_client.electrsd.esplora_url.as_ref().unwrap()), 20)
+    }
+}
+
+const DEFAULT_CONCURRENT_REQUESTS: u8 = 4;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn feerate_parsing() {
+        let esplora_fees = serde_json::from_str::<HashMap<String, f64>>(
+            r#"{
+  "25": 1.015,
+  "5": 2.3280000000000003,
+  "12": 2.0109999999999997,
+  "15": 1.018,
+  "17": 1.018,
+  "11": 2.0109999999999997,
+  "3": 3.01,
+  "2": 4.9830000000000005,
+  "6": 2.2359999999999998,
+  "21": 1.018,
+  "13": 1.081,
+  "7": 2.2359999999999998,
+  "8": 2.2359999999999998,
+  "16": 1.018,
+  "20": 1.018,
+  "22": 1.017,
+  "23": 1.017,
+  "504": 1,
+  "9": 2.2359999999999998,
+  "14": 1.018,
+  "10": 2.0109999999999997,
+  "24": 1.017,
+  "1008": 1,
+  "1": 4.9830000000000005,
+  "4": 2.3280000000000003,
+  "19": 1.018,
+  "144": 1,
+  "18": 1.018
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            into_fee_rate(6, esplora_fees.clone()).unwrap(),
+            FeeRate::from_sat_per_vb(2.236)
+        );
+        assert_eq!(
+            into_fee_rate(26, esplora_fees).unwrap(),
+            FeeRate::from_sat_per_vb(1.015),
+            "should inherit from value for 25"
+        );
     }
 }

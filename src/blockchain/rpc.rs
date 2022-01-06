@@ -18,10 +18,12 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use bdk::blockchain::{RpcConfig, RpcBlockchain, ConfigurableBlockchain};
+//! # use bdk::blockchain::{RpcConfig, RpcBlockchain, ConfigurableBlockchain, rpc::Auth};
 //! let config = RpcConfig {
 //!     url: "127.0.0.1:18332".to_string(),
-//!     auth: bitcoincore_rpc::Auth::CookieFile("/home/user/.bitcoin/.cookie".into()),
+//!     auth: Auth::Cookie {
+//!         file: "/home/user/.bitcoin/.cookie".into(),
+//!     },
 //!     network: bdk::bitcoin::Network::Testnet,
 //!     wallet_name: "wallet_name".to_string(),
 //!     skip_blocks: None,
@@ -33,18 +35,18 @@ use crate::bitcoin::consensus::deserialize;
 use crate::bitcoin::{Address, Network, OutPoint, Transaction, TxOut, Txid};
 use crate::blockchain::{Blockchain, Capability, ConfigurableBlockchain, Progress};
 use crate::database::{BatchDatabase, DatabaseUtils};
-use crate::descriptor::{get_checksum, IntoWalletDescriptor};
-use crate::wallet::utils::SecpCtx;
-use crate::{ConfirmationTime, Error, FeeRate, KeychainKind, LocalUtxo, TransactionDetails};
+use crate::{BlockTime, Error, FeeRate, KeychainKind, LocalUtxo, TransactionDetails};
 use bitcoincore_rpc::json::{
     GetAddressInfoResultLabel, ImportMultiOptions, ImportMultiRequest,
     ImportMultiRequestScriptPubkey, ImportMultiRescanSince,
 };
 use bitcoincore_rpc::jsonrpc::serde_json::Value;
-use bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoincore_rpc::Auth as RpcAuth;
+use bitcoincore_rpc::{Client, RpcApi};
 use log::debug;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 /// The main struct for RPC backend implementing the [crate::blockchain::Blockchain] trait
@@ -64,7 +66,7 @@ pub struct RpcBlockchain {
 }
 
 /// RpcBlockchain configuration options
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct RpcConfig {
     /// The bitcoin node url
     pub url: String,
@@ -72,10 +74,43 @@ pub struct RpcConfig {
     pub auth: Auth,
     /// The network we are using (it will be checked the bitcoin node network matches this)
     pub network: Network,
-    /// The wallet name in the bitcoin node, consider using [wallet_name_from_descriptor] for this
+    /// The wallet name in the bitcoin node, consider using [crate::wallet::wallet_name_from_descriptor] for this
     pub wallet_name: String,
     /// Skip this many blocks of the blockchain at the first rescan, if None the rescan is done from the genesis block
     pub skip_blocks: Option<u32>,
+}
+
+/// This struct is equivalent to [bitcoincore_rpc::Auth] but it implements [serde::Serialize]
+/// To be removed once upstream equivalent is implementing Serialize (json serialization format
+/// should be the same), see [rust-bitcoincore-rpc/pull/181](https://github.com/rust-bitcoin/rust-bitcoincore-rpc/pull/181)
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(untagged)]
+pub enum Auth {
+    /// None authentication
+    None,
+    /// Authentication with username and password, usually [Auth::Cookie] should be preferred
+    UserPass {
+        /// Username
+        username: String,
+        /// Password
+        password: String,
+    },
+    /// Authentication with a cookie file
+    Cookie {
+        /// Cookie file
+        file: PathBuf,
+    },
+}
+
+impl From<Auth> for RpcAuth {
+    fn from(auth: Auth) -> Self {
+        match auth {
+            Auth::None => RpcAuth::None,
+            Auth::UserPass { username, password } => RpcAuth::UserPass(username, password),
+            Auth::Cookie { file } => RpcAuth::CookieFile(file),
+        }
+    }
 }
 
 impl RpcBlockchain {
@@ -119,7 +154,7 @@ impl Blockchain for RpcBlockchain {
             .iter()
             .map(|s| ImportMultiRequest {
                 timestamp: ImportMultiRescanSince::Timestamp(0),
-                script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&s)),
+                script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(s)),
                 watchonly: Some(true),
                 ..Default::default()
             })
@@ -132,22 +167,25 @@ impl Blockchain for RpcBlockchain {
         //TODO maybe convenient using import_descriptor for compatible descriptor and import_multi as fallback
         self.client.import_multi(&requests, Some(&options))?;
 
-        let current_height = self.get_height()?;
+        loop {
+            let current_height = self.get_height()?;
 
-        // min because block invalidate may cause height to go down
-        let node_synced = self.get_node_synced_height()?.min(current_height);
+            // min because block invalidate may cause height to go down
+            let node_synced = self.get_node_synced_height()?.min(current_height);
 
-        //TODO call rescan in chunks (updating node_synced_height) so that in case of
-        // interruption work can be partially recovered
-        debug!(
-            "rescan_blockchain from:{} to:{}",
-            node_synced, current_height
-        );
-        self.client
-            .rescan_blockchain(Some(node_synced as usize), Some(current_height as usize))?;
-        progress_update.update(1.0, None)?;
+            let sync_up_to = node_synced.saturating_add(10_000).min(current_height);
 
-        self.set_node_synced_height(current_height)?;
+            debug!("rescan_blockchain from:{} to:{}", node_synced, sync_up_to);
+            self.client
+                .rescan_blockchain(Some(node_synced as usize), Some(sync_up_to as usize))?;
+            progress_update.update((sync_up_to as f32) / (current_height as f32), None)?;
+
+            self.set_node_synced_height(sync_up_to)?;
+
+            if sync_up_to == current_height {
+                break;
+            }
+        }
 
         self.sync(database, progress_update)
     }
@@ -190,7 +228,7 @@ impl Blockchain for RpcBlockchain {
             list_txs_ids.insert(txid);
             if let Some(mut known_tx) = known_txs.get_mut(&txid) {
                 let confirmation_time =
-                    ConfirmationTime::new(tx_result.info.blockheight, tx_result.info.blocktime);
+                    BlockTime::new(tx_result.info.blockheight, tx_result.info.blocktime);
                 if confirmation_time != known_tx.confirmation_time {
                     // reorg may change tx height
                     debug!(
@@ -198,7 +236,7 @@ impl Blockchain for RpcBlockchain {
                         txid, confirmation_time
                     );
                     known_tx.confirmation_time = confirmation_time;
-                    db.set_tx(&known_tx)?;
+                    db.set_tx(known_tx)?;
                 }
             } else {
                 //TODO check there is already the raw tx in db?
@@ -226,7 +264,7 @@ impl Blockchain for RpcBlockchain {
                 let td = TransactionDetails {
                     transaction: Some(tx),
                     txid: tx_result.info.txid,
-                    confirmation_time: ConfirmationTime::new(
+                    confirmation_time: BlockTime::new(
                         tx_result.info.blockheight,
                         tx_result.info.blocktime,
                     ),
@@ -320,7 +358,7 @@ impl ConfigurableBlockchain for RpcBlockchain {
         let wallet_url = format!("{}/wallet/{}", config.url, &wallet_name);
         debug!("connecting to {} auth:{:?}", wallet_url, config.auth);
 
-        let client = Client::new(wallet_url, config.auth.clone())?;
+        let client = Client::new(wallet_url.as_str(), config.auth.clone().into())?;
         let loaded_wallets = client.list_wallets()?;
         if loaded_wallets.contains(&wallet_name) {
             debug!("wallet already loaded {:?}", wallet_name);
@@ -375,35 +413,6 @@ impl ConfigurableBlockchain for RpcBlockchain {
     }
 }
 
-/// Deterministically generate a unique name given the descriptors defining the wallet
-pub fn wallet_name_from_descriptor<T>(
-    descriptor: T,
-    change_descriptor: Option<T>,
-    network: Network,
-    secp: &SecpCtx,
-) -> Result<String, Error>
-where
-    T: IntoWalletDescriptor,
-{
-    //TODO check descriptors contains only public keys
-    let descriptor = descriptor
-        .into_wallet_descriptor(&secp, network)?
-        .0
-        .to_string();
-    let mut wallet_name = get_checksum(&descriptor[..descriptor.find('#').unwrap()])?;
-    if let Some(change_descriptor) = change_descriptor {
-        let change_descriptor = change_descriptor
-            .into_wallet_descriptor(&secp, network)?
-            .0
-            .to_string();
-        wallet_name.push_str(
-            get_checksum(&change_descriptor[..change_descriptor.find('#').unwrap()])?.as_str(),
-        );
-    }
-
-    Ok(wallet_name)
-}
-
 /// return the wallets available in default wallet directory
 //TODO use bitcoincore_rpc method when PR #179 lands
 fn list_wallet_dir(client: &Client) -> Result<Vec<String>, Error> {
@@ -427,7 +436,7 @@ crate::bdk_blockchain_tests! {
     fn test_instance(test_client: &TestClient) -> RpcBlockchain {
         let config = RpcConfig {
             url: test_client.bitcoind.rpc_url(),
-            auth: Auth::CookieFile(test_client.bitcoind.params.cookie_file.clone()),
+            auth: Auth::Cookie { file: test_client.bitcoind.params.cookie_file.clone() },
             network: Network::Regtest,
             wallet_name: format!("client-wallet-test-{:?}", std::time::SystemTime::now() ),
             skip_blocks: None,

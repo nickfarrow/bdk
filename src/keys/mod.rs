@@ -319,6 +319,7 @@ impl<Ctx: ScriptContext> ExtendedKey<Ctx> {
         match self {
             ExtendedKey::Private((mut xprv, _)) => {
                 xprv.network = network;
+                xprv.private_key.network = network;
                 Some(xprv)
             }
             ExtendedKey::Public(_) => None,
@@ -356,7 +357,7 @@ impl<Ctx: ScriptContext> From<bip32::ExtendedPrivKey> for ExtendedKey<Ctx> {
 
 /// Trait for keys that can be derived.
 ///
-/// When extra metadata are provided, a [`DerivableKey`] can be transofrmed into a
+/// When extra metadata are provided, a [`DerivableKey`] can be transformed into a
 /// [`DescriptorKey`]: the trait [`IntoDescriptorKey`] is automatically implemented
 /// for `(DerivableKey, DerivationPath)` and
 /// `(DerivableKey, KeySource, DerivationPath)` tuples.
@@ -460,9 +461,9 @@ use bdk::keys::bip39::{Mnemonic, Language};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let xkey: ExtendedKey =
-    Mnemonic::from_phrase(
+    Mnemonic::parse_in(
+        Language::English,
         "jelly crash boy whisper mouse ecology tuna soccer memory million news short",
-        Language::English
     )?
     .into_extended_key()?;
 let xprv = xkey.into_xprv(Network::Bitcoin).unwrap();
@@ -748,7 +749,21 @@ pub fn make_pk<Pk: IntoDescriptorKey<Ctx>, Ctx: ScriptContext>(
     let (key, key_map, valid_networks) = descriptor_key.into_descriptor_key()?.extract(secp)?;
     let minisc = Miniscript::from_ast(Terminal::PkK(key))?;
 
-    minisc.check_minsicript()?;
+    minisc.check_miniscript()?;
+
+    Ok((minisc, key_map, valid_networks))
+}
+
+// Used internally by `bdk::fragment!` to build `pk_h()` fragments
+#[doc(hidden)]
+pub fn make_pkh<Pk: IntoDescriptorKey<Ctx>, Ctx: ScriptContext>(
+    descriptor_key: Pk,
+    secp: &SecpCtx,
+) -> Result<(Miniscript<DescriptorPublicKey, Ctx>, KeyMap, ValidNetworks), DescriptorError> {
+    let (key, key_map, valid_networks) = descriptor_key.into_descriptor_key()?.extract(secp)?;
+    let minisc = Miniscript::from_ast(Terminal::PkH(key))?;
+
+    minisc.check_miniscript()?;
 
     Ok((minisc, key_map, valid_networks))
 }
@@ -763,7 +778,7 @@ pub fn make_multi<Pk: IntoDescriptorKey<Ctx>, Ctx: ScriptContext>(
     let (pks, key_map, valid_networks) = expand_multi_keys(pks, secp)?;
     let minisc = Miniscript::from_ast(Terminal::Multi(thresh, pks))?;
 
-    minisc.check_minsicript()?;
+    minisc.check_miniscript()?;
 
     Ok((minisc, key_map, valid_networks))
 }
@@ -916,5 +931,44 @@ pub mod test {
             generated_wif.to_string(),
             "L2wTu6hQrnDMiFNWA5na6jB12ErGQqtXwqpSL7aWquJaZG8Ai3ch"
         );
+    }
+
+    #[test]
+    fn test_keys_wif_network() {
+        // test mainnet wif
+        let generated_xprv: GeneratedKey<_, miniscript::Segwitv0> =
+            bip32::ExtendedPrivKey::generate_with_entropy_default(TEST_ENTROPY).unwrap();
+        let xkey = generated_xprv.into_extended_key().unwrap();
+
+        let network = Network::Bitcoin;
+        let xprv = xkey.into_xprv(network).unwrap();
+        let wif = PrivateKey::from_wif(&xprv.private_key.to_wif()).unwrap();
+        assert_eq!(wif.network, network);
+
+        // test testnet wif
+        let generated_xprv: GeneratedKey<_, miniscript::Segwitv0> =
+            bip32::ExtendedPrivKey::generate_with_entropy_default(TEST_ENTROPY).unwrap();
+        let xkey = generated_xprv.into_extended_key().unwrap();
+
+        let network = Network::Testnet;
+        let xprv = xkey.into_xprv(network).unwrap();
+        let wif = PrivateKey::from_wif(&xprv.private_key.to_wif()).unwrap();
+        assert_eq!(wif.network, network);
+    }
+
+    #[cfg(feature = "keys-bip39")]
+    #[test]
+    fn test_keys_wif_network_bip39() {
+        let xkey: ExtendedKey = bip39::Mnemonic::parse_in(
+            bip39::Language::English,
+            "jelly crash boy whisper mouse ecology tuna soccer memory million news short",
+        )
+        .unwrap()
+        .into_extended_key()
+        .unwrap();
+        let xprv = xkey.into_xprv(Network::Testnet).unwrap();
+        let wif = PrivateKey::from_wif(&xprv.private_key.to_wif()).unwrap();
+
+        assert_eq!(wif.network, Network::Testnet);
     }
 }

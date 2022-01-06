@@ -71,7 +71,7 @@ use super::{Blockchain, Capability, ConfigurableBlockchain, Progress};
 use crate::database::{BatchDatabase, BatchOperations, DatabaseUtils};
 use crate::error::Error;
 use crate::types::{KeychainKind, LocalUtxo, TransactionDetails};
-use crate::{ConfirmationTime, FeeRate};
+use crate::{BlockTime, FeeRate};
 
 use peer::*;
 use store::*;
@@ -206,7 +206,7 @@ impl CompactFiltersBlockchain {
                 transaction: Some(tx.clone()),
                 received: incoming,
                 sent: outgoing,
-                confirmation_time: ConfirmationTime::new(height, timestamp),
+                confirmation_time: BlockTime::new(height, timestamp),
                 verified: height.is_some(),
                 fee: Some(inputs_sum.saturating_sub(outputs_sum)),
             };
@@ -254,7 +254,7 @@ impl Blockchain for CompactFiltersBlockchain {
         let total_cost = headers_cost + filters_cost + PROCESS_BLOCKS_COST;
 
         if let Some(snapshot) = sync::sync_headers(
-            Arc::clone(&first_peer),
+            Arc::clone(first_peer),
             Arc::clone(&self.headers),
             |new_height| {
                 let local_headers_cost =
@@ -275,7 +275,7 @@ impl Blockchain for CompactFiltersBlockchain {
         let buried_height = synced_height.saturating_sub(sync::BURIED_CONFIRMATIONS);
         info!("Synced headers to height: {}", synced_height);
 
-        cf_sync.prepare_sync(Arc::clone(&first_peer))?;
+        cf_sync.prepare_sync(Arc::clone(first_peer))?;
 
         let all_scripts = Arc::new(
             database
@@ -294,7 +294,7 @@ impl Blockchain for CompactFiltersBlockchain {
         let mut threads = Vec::with_capacity(self.peers.len());
         for peer in &self.peers {
             let cf_sync = Arc::clone(&cf_sync);
-            let peer = Arc::clone(&peer);
+            let peer = Arc::clone(peer);
             let headers = Arc::clone(&self.headers);
             let all_scripts = Arc::clone(&all_scripts);
             let last_synced_block = Arc::clone(&last_synced_block);
@@ -472,7 +472,7 @@ pub struct CompactFiltersBlockchainConfig {
     pub peers: Vec<BitcoinPeerConfig>,
     /// Network used
     pub network: Network,
-    /// Storage dir to save partially downloaded headers and full blocks
+    /// Storage dir to save partially downloaded headers and full blocks. Should be a separate directory per descriptor. Consider using [crate::wallet::wallet_name_from_descriptor] for this.
     pub storage_dir: String,
     /// Optionally skip initial `skip_blocks` blocks (default: 0)
     pub skip_blocks: Option<usize>,

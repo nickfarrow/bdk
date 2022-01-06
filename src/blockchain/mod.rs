@@ -27,9 +27,21 @@ use crate::database::BatchDatabase;
 use crate::error::Error;
 use crate::FeeRate;
 
-#[cfg(any(feature = "electrum", feature = "esplora", feature = "compact_filters"))]
+#[cfg(any(
+    feature = "electrum",
+    feature = "esplora",
+    feature = "compact_filters",
+    feature = "rpc"
+))]
 pub mod any;
-#[cfg(any(feature = "electrum", feature = "esplora", feature = "compact_filters"))]
+mod script_sync;
+
+#[cfg(any(
+    feature = "electrum",
+    feature = "esplora",
+    feature = "compact_filters",
+    feature = "rpc"
+))]
 pub use any::{AnyBlockchain, AnyBlockchainConfig};
 
 #[cfg(feature = "electrum")]
@@ -60,8 +72,6 @@ pub mod compact_filters;
 
 #[cfg(feature = "compact_filters")]
 pub use self::compact_filters::CompactFiltersBlockchain;
-
-mod script_sync;
 
 /// Capabilities that can be supported by a [`Blockchain`] backend
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -190,7 +200,7 @@ impl Progress for NoopProgress {
 #[derive(Clone, Copy)]
 pub struct LogProgress;
 
-/// Create a nwe instance of [`LogProgress`]
+/// Create a new instance of [`LogProgress`]
 pub fn log_progress() -> LogProgress {
     LogProgress
 }
