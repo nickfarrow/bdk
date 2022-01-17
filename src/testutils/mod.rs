@@ -80,12 +80,12 @@ impl TranslateDescriptor for Descriptor<DescriptorPublicKey> {
     ) -> Descriptor<PublicKey> {
         let translate = |key: &DescriptorPublicKey| -> PublicKey {
             match key {
-                DescriptorPublicKey::XPub(xpub) => {
+                DescriptorPublicKey::XPub(xpub) => bitcoin::PublicKey::new(
                     xpub.xkey
                         .derive_pub(secp, &xpub.derivation_path)
                         .expect("hardened derivation steps")
-                        .public_key
-                }
+                        .public_key,
+                ),
                 DescriptorPublicKey::SinglePub(key) => key.key,
             }
         };

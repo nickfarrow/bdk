@@ -248,7 +248,7 @@ fn test_create_tx_custom_version() {
         .version(42);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.version, 42);
+    assert_eq!(psbt.unsigned_tx.version, 42);
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn test_create_tx_default_locktime() {
     builder.add_recipient(addr.script_pubkey(), 25_000);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.lock_time, 0);
+    assert_eq!(psbt.unsigned_tx.lock_time, 0);
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn test_create_tx_default_locktime_cltv() {
     builder.add_recipient(addr.script_pubkey(), 25_000);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.lock_time, 100_000);
+    assert_eq!(psbt.unsigned_tx.lock_time, 100_000);
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn test_create_tx_custom_locktime() {
         .nlocktime(630_000);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.lock_time, 630_000);
+    assert_eq!(psbt.unsigned_tx.lock_time, 630_000);
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn test_create_tx_custom_locktime_compatible_with_cltv() {
         .nlocktime(630_000);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.lock_time, 630_000);
+    assert_eq!(psbt.unsigned_tx.lock_time, 630_000);
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn test_create_tx_no_rbf_csv() {
     builder.add_recipient(addr.script_pubkey(), 25_000);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 6);
+    assert_eq!(psbt.unsigned_tx.input[0].sequence, 6);
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn test_create_tx_with_default_rbf_csv() {
     let (psbt, _) = builder.finish().unwrap();
     // When CSV is enabled it takes precedence over the rbf value (unless forced by the user).
     // It will be set to the OP_CSV value, in this case 6
-    assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 6);
+    assert_eq!(psbt.unsigned_tx.input[0].sequence, 6);
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn test_create_tx_no_rbf_cltv() {
     builder.add_recipient(addr.script_pubkey(), 25_000);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xFFFFFFFE);
+    assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xFFFFFFFE);
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn test_create_tx_custom_rbf_sequence() {
         .enable_rbf_with_sequence(0xDEADBEEF);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xDEADBEEF);
+    assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xDEADBEEF);
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn test_create_tx_default_sequence() {
     builder.add_recipient(addr.script_pubkey(), 25_000);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
+    assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
 }
 
 #[test]
@@ -419,9 +419,9 @@ fn test_create_tx_drain_wallet_and_drain_to() {
     builder.drain_to(addr.script_pubkey()).drain_wallet();
     let (psbt, details) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
+    assert_eq!(psbt.unsigned_tx.output.len(), 1);
     assert_eq!(
-        psbt.global.unsigned_tx.output[0].value,
+        psbt.unsigned_tx.output[0].value,
         50_000 - details.fee.unwrap_or(0)
     );
 }
@@ -437,7 +437,7 @@ fn test_create_tx_drain_wallet_and_drain_to_and_with_recipient() {
         .drain_to(drain_addr.script_pubkey())
         .drain_wallet();
     let (psbt, details) = builder.finish().unwrap();
-    let outputs = psbt.global.unsigned_tx.output;
+    let outputs = psbt.unsigned_tx.output;
 
     assert_eq!(outputs.len(), 2);
     let main_output = outputs
@@ -458,7 +458,7 @@ fn test_split_n_change() {
     let mut builder = wallet.build_tx();
     builder.drain_wallet().split_change(5_000, 5);
     let (psbt, details) = builder.finish().unwrap();
-    let outputs = psbt.global.unsigned_tx.output;
+    let outputs = psbt.unsigned_tx.output;
     assert_eq!(outputs.len(), 6);
     assert_eq!(
         outputs.iter().filter(|txout| txout.value == 5_000).count(),
@@ -473,7 +473,7 @@ fn test_split_max_change() {
     let mut builder = wallet.build_tx();
     builder.drain_wallet().split_change(5_000, usize::MAX);
     let (psbt, details) = builder.finish().unwrap();
-    let outputs = psbt.global.unsigned_tx.output;
+    let outputs = psbt.unsigned_tx.output;
     assert_eq!(outputs.len(), 10);
     assert_eq!(
         outputs.iter().filter(|txout| txout.value == 5_000).count(),
@@ -520,9 +520,9 @@ fn test_create_tx_absolute_fee() {
     let (psbt, details) = builder.finish().unwrap();
 
     assert_eq!(details.fee.unwrap_or(0), 100);
-    assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
+    assert_eq!(psbt.unsigned_tx.output.len(), 1);
     assert_eq!(
-        psbt.global.unsigned_tx.output[0].value,
+        psbt.unsigned_tx.output[0].value,
         50_000 - details.fee.unwrap_or(0)
     );
 }
@@ -539,9 +539,9 @@ fn test_create_tx_absolute_zero_fee() {
     let (psbt, details) = builder.finish().unwrap();
 
     assert_eq!(details.fee.unwrap_or(0), 0);
-    assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
+    assert_eq!(psbt.unsigned_tx.output.len(), 1);
     assert_eq!(
-        psbt.global.unsigned_tx.output[0].value,
+        psbt.unsigned_tx.output[0].value,
         50_000 - details.fee.unwrap_or(0)
     );
 }
@@ -571,10 +571,10 @@ fn test_create_tx_add_change() {
         .ordering(TxOrdering::Untouched);
     let (psbt, details) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.output.len(), 2);
-    assert_eq!(psbt.global.unsigned_tx.output[0].value, 25_000);
+    assert_eq!(psbt.unsigned_tx.output.len(), 2);
+    assert_eq!(psbt.unsigned_tx.output[0].value, 25_000);
     assert_eq!(
-        psbt.global.unsigned_tx.output[1].value,
+        psbt.unsigned_tx.output[1].value,
         25_000 - details.fee.unwrap_or(0)
     );
 }
@@ -587,8 +587,8 @@ fn test_create_tx_skip_change_dust() {
     builder.add_recipient(addr.script_pubkey(), 49_800);
     let (psbt, details) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
-    assert_eq!(psbt.global.unsigned_tx.output[0].value, 49_800);
+    assert_eq!(psbt.unsigned_tx.output.len(), 1);
+    assert_eq!(psbt.unsigned_tx.output[0].value, 49_800);
     assert_eq!(details.fee.unwrap_or(0), 200);
 }
 
@@ -617,13 +617,13 @@ fn test_create_tx_ordering_respected() {
         .ordering(super::tx_builder::TxOrdering::Bip69Lexicographic);
     let (psbt, details) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.output.len(), 3);
+    assert_eq!(psbt.unsigned_tx.output.len(), 3);
     assert_eq!(
-        psbt.global.unsigned_tx.output[0].value,
+        psbt.unsigned_tx.output[0].value,
         10_000 - details.fee.unwrap_or(0)
     );
-    assert_eq!(psbt.global.unsigned_tx.output[1].value, 10_000);
-    assert_eq!(psbt.global.unsigned_tx.output[2].value, 30_000);
+    assert_eq!(psbt.unsigned_tx.output[1].value, 10_000);
+    assert_eq!(psbt.unsigned_tx.output[2].value, 30_000);
 }
 
 #[test]
@@ -841,7 +841,7 @@ fn test_create_tx_add_utxo() {
     let (psbt, details) = builder.finish().unwrap();
 
     assert_eq!(
-        psbt.global.unsigned_tx.input.len(),
+        psbt.unsigned_tx.input.len(),
         2,
         "should add an additional input since 25_000 < 30_000"
     );
@@ -898,7 +898,7 @@ fn test_create_tx_policy_path_no_csv() {
         .policy_path(path, KeychainKind::External);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
+    assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
 }
 
 #[test]
@@ -917,7 +917,7 @@ fn test_create_tx_policy_path_use_csv() {
         .policy_path(path, KeychainKind::External);
     let (psbt, _) = builder.finish().unwrap();
 
-    assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 144);
+    assert_eq!(psbt.unsigned_tx.input[0].sequence, 144);
 }
 
 #[test]
@@ -1353,7 +1353,7 @@ fn test_bump_fee_reduce_change() {
     );
     assert!(details.fee.unwrap_or(0) > original_details.fee.unwrap_or(0));
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.output.len(), 2);
     assert_eq!(
         tx.output
@@ -1419,7 +1419,7 @@ fn test_bump_fee_absolute_reduce_change() {
         original_details.fee.unwrap_or(0)
     );
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.output.len(), 2);
     assert_eq!(
         tx.output
@@ -1478,7 +1478,7 @@ fn test_bump_fee_reduce_single_recipient() {
     assert_eq!(details.sent, original_details.sent);
     assert!(details.fee.unwrap_or(0) > original_details.fee.unwrap_or(0));
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.output.len(), 1);
     assert_eq!(tx.output[0].value + details.fee.unwrap_or(0), details.sent);
 
@@ -1522,7 +1522,7 @@ fn test_bump_fee_absolute_reduce_single_recipient() {
     assert_eq!(details.sent, original_details.sent);
     assert!(details.fee.unwrap_or(0) > original_details.fee.unwrap_or(0));
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.output.len(), 1);
     assert_eq!(tx.output[0].value + details.fee.unwrap_or(0), details.sent);
 
@@ -1673,7 +1673,7 @@ fn test_bump_fee_add_input() {
     assert_eq!(details.sent, original_details.sent + 25_000);
     assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.input.len(), 2);
     assert_eq!(tx.output.len(), 2);
     assert_eq!(
@@ -1736,7 +1736,7 @@ fn test_bump_fee_absolute_add_input() {
     assert_eq!(details.sent, original_details.sent + 25_000);
     assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.input.len(), 2);
     assert_eq!(tx.output.len(), 2);
     assert_eq!(
@@ -1813,7 +1813,7 @@ fn test_bump_fee_no_change_add_input_and_change() {
         75_000 - original_send_all_amount - details.fee.unwrap_or(0)
     );
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.input.len(), 2);
     assert_eq!(tx.output.len(), 2);
     assert_eq!(
@@ -1884,7 +1884,7 @@ fn test_bump_fee_add_input_change_dust() {
     assert_eq!(details.fee.unwrap_or(0), 30_000);
     assert_eq!(details.received, 0);
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.input.len(), 2);
     assert_eq!(tx.output.len(), 1);
     assert_eq!(
@@ -1947,7 +1947,7 @@ fn test_bump_fee_force_add_input() {
     assert_eq!(details.sent, original_details.sent + 25_000);
     assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.input.len(), 2);
     assert_eq!(tx.output.len(), 2);
     assert_eq!(
@@ -2018,7 +2018,7 @@ fn test_bump_fee_absolute_force_add_input() {
     assert_eq!(details.sent, original_details.sent + 25_000);
     assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-    let tx = &psbt.global.unsigned_tx;
+    let tx = &psbt.unsigned_tx;
     assert_eq!(tx.input.len(), 2);
     assert_eq!(tx.output.len(), 2);
     assert_eq!(
@@ -2176,7 +2176,7 @@ fn test_signing_only_one_of_multiple_inputs() {
     };
 
     psbt.inputs.push(dud_input);
-    psbt.global.unsigned_tx.input.push(bitcoin::TxIn::default());
+    psbt.unsigned_tx.input.push(bitcoin::TxIn::default());
     let is_final = wallet
         .sign(
             &mut psbt,

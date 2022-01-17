@@ -28,7 +28,9 @@ use bitcoin::util::base58;
 use bitcoin::util::psbt::raw::Key as PsbtKey;
 use bitcoin::util::psbt::Input;
 use bitcoin::util::psbt::PartiallySignedTransaction as Psbt;
-use bitcoin::{Address, Network, OutPoint, Script, SigHashType, Transaction, TxOut, Txid};
+use bitcoin::{
+    Address, EcdsaSigHashType as SigHashType, Network, OutPoint, Script, Transaction, TxOut, Txid,
+};
 
 use miniscript::descriptor::DescriptorTrait;
 use miniscript::psbt::PsbtInputSatisfier;
@@ -671,7 +673,7 @@ where
                 previous_output: u.outpoint(),
                 script_sig: Script::default(),
                 sequence: n_sequence,
-                witness: vec![],
+                witness: bitcoin::blockdata::witness::Witness::default(),
             })
             .collect();
 
@@ -1026,7 +1028,7 @@ where
     ///
     /// The [`SignOptions`] can be used to tweak the behavior of the finalizer.
     pub fn finalize_psbt(&self, psbt: &mut Psbt, sign_options: SignOptions) -> Result<bool, Error> {
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         let mut finished = true;
 
         for (n, input) in tx.input.iter().enumerate() {
@@ -1089,7 +1091,7 @@ where
                         Ok(_) => {
                             let psbt_input = &mut psbt.inputs[n];
                             psbt_input.final_script_sig = Some(tmp_input.script_sig);
-                            psbt_input.final_script_witness = Some(tmp_input.witness);
+                            psbt_input.final_script_witness = Some(tmp_input.witness.to_vec());
                         }
                         Err(e) => {
                             debug!("satisfy error {:?} for input {}", e, n);
@@ -1353,7 +1355,7 @@ where
                     _ => return Err(Error::MissingKeyOrigin(xpub.xkey.to_string())),
                 };
 
-                psbt.global.unknown.insert(key, origin.serialize());
+                psbt.unknown.insert(key, origin.serialize());
             }
         }
 
@@ -1363,11 +1365,7 @@ where
             .collect::<HashMap<_, _>>();
 
         // add metadata for the inputs
-        for (psbt_input, input) in psbt
-            .inputs
-            .iter_mut()
-            .zip(psbt.global.unsigned_tx.input.iter())
-        {
+        for (psbt_input, input) in psbt.inputs.iter_mut().zip(psbt.unsigned_tx.input.iter()) {
             let utxo = match lookup_output.remove(&input.previous_output) {
                 Some(utxo) => utxo,
                 None => continue,
@@ -1406,10 +1404,7 @@ where
         self.add_input_hd_keypaths(&mut psbt)?;
 
         // add metadata for the outputs
-        for (psbt_output, tx_output) in psbt
-            .outputs
-            .iter_mut()
-            .zip(psbt.global.unsigned_tx.output.iter())
+        for (psbt_output, tx_output) in psbt.outputs.iter_mut().zip(psbt.unsigned_tx.output.iter())
         {
             if let Some((keychain, child)) = self
                 .database
@@ -1879,7 +1874,7 @@ pub(crate) mod test {
             .version(42);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.version, 42);
+        assert_eq!(psbt.unsigned_tx.version, 42);
     }
 
     #[test]
@@ -1890,7 +1885,7 @@ pub(crate) mod test {
         builder.add_recipient(addr.script_pubkey(), 25_000);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.lock_time, 0);
+        assert_eq!(psbt.unsigned_tx.lock_time, 0);
     }
 
     #[test]
@@ -1901,7 +1896,7 @@ pub(crate) mod test {
         builder.add_recipient(addr.script_pubkey(), 25_000);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.lock_time, 100_000);
+        assert_eq!(psbt.unsigned_tx.lock_time, 100_000);
     }
 
     #[test]
@@ -1914,7 +1909,7 @@ pub(crate) mod test {
             .nlocktime(630_000);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.lock_time, 630_000);
+        assert_eq!(psbt.unsigned_tx.lock_time, 630_000);
     }
 
     #[test]
@@ -1927,7 +1922,7 @@ pub(crate) mod test {
             .nlocktime(630_000);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.lock_time, 630_000);
+        assert_eq!(psbt.unsigned_tx.lock_time, 630_000);
     }
 
     #[test]
@@ -1952,7 +1947,7 @@ pub(crate) mod test {
         builder.add_recipient(addr.script_pubkey(), 25_000);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 6);
+        assert_eq!(psbt.unsigned_tx.input[0].sequence, 6);
     }
 
     #[test]
@@ -1966,7 +1961,7 @@ pub(crate) mod test {
         let (psbt, _) = builder.finish().unwrap();
         // When CSV is enabled it takes precedence over the rbf value (unless forced by the user).
         // It will be set to the OP_CSV value, in this case 6
-        assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 6);
+        assert_eq!(psbt.unsigned_tx.input[0].sequence, 6);
     }
 
     #[test]
@@ -1991,7 +1986,7 @@ pub(crate) mod test {
         builder.add_recipient(addr.script_pubkey(), 25_000);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xFFFFFFFE);
+        assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xFFFFFFFE);
     }
 
     #[test]
@@ -2016,7 +2011,7 @@ pub(crate) mod test {
             .enable_rbf_with_sequence(0xDEADBEEF);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xDEADBEEF);
+        assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xDEADBEEF);
     }
 
     #[test]
@@ -2027,7 +2022,7 @@ pub(crate) mod test {
         builder.add_recipient(addr.script_pubkey(), 25_000);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
+        assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
     }
 
     #[test]
@@ -2052,9 +2047,9 @@ pub(crate) mod test {
         builder.drain_to(addr.script_pubkey()).drain_wallet();
         let (psbt, details) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
+        assert_eq!(psbt.unsigned_tx.output.len(), 1);
         assert_eq!(
-            psbt.global.unsigned_tx.output[0].value,
+            psbt.unsigned_tx.output[0].value,
             50_000 - details.fee.unwrap_or(0)
         );
     }
@@ -2071,7 +2066,7 @@ pub(crate) mod test {
             .drain_wallet();
         let (psbt, details) = builder.finish().unwrap();
         dbg!(&psbt);
-        let outputs = psbt.global.unsigned_tx.output;
+        let outputs = psbt.unsigned_tx.output;
 
         assert_eq!(outputs.len(), 2);
         let main_output = outputs
@@ -2122,9 +2117,9 @@ pub(crate) mod test {
         let (psbt, details) = builder.finish().unwrap();
 
         assert_eq!(details.fee.unwrap_or(0), 100);
-        assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
+        assert_eq!(psbt.unsigned_tx.output.len(), 1);
         assert_eq!(
-            psbt.global.unsigned_tx.output[0].value,
+            psbt.unsigned_tx.output[0].value,
             50_000 - details.fee.unwrap_or(0)
         );
     }
@@ -2141,9 +2136,9 @@ pub(crate) mod test {
         let (psbt, details) = builder.finish().unwrap();
 
         assert_eq!(details.fee.unwrap_or(0), 0);
-        assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
+        assert_eq!(psbt.unsigned_tx.output.len(), 1);
         assert_eq!(
-            psbt.global.unsigned_tx.output[0].value,
+            psbt.unsigned_tx.output[0].value,
             50_000 - details.fee.unwrap_or(0)
         );
     }
@@ -2173,10 +2168,10 @@ pub(crate) mod test {
             .ordering(TxOrdering::Untouched);
         let (psbt, details) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.output.len(), 2);
-        assert_eq!(psbt.global.unsigned_tx.output[0].value, 25_000);
+        assert_eq!(psbt.unsigned_tx.output.len(), 2);
+        assert_eq!(psbt.unsigned_tx.output[0].value, 25_000);
         assert_eq!(
-            psbt.global.unsigned_tx.output[1].value,
+            psbt.unsigned_tx.output[1].value,
             25_000 - details.fee.unwrap_or(0)
         );
     }
@@ -2189,8 +2184,8 @@ pub(crate) mod test {
         builder.add_recipient(addr.script_pubkey(), 49_800);
         let (psbt, details) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.output.len(), 1);
-        assert_eq!(psbt.global.unsigned_tx.output[0].value, 49_800);
+        assert_eq!(psbt.unsigned_tx.output.len(), 1);
+        assert_eq!(psbt.unsigned_tx.output[0].value, 49_800);
         assert_eq!(details.fee.unwrap_or(0), 200);
     }
 
@@ -2219,13 +2214,13 @@ pub(crate) mod test {
             .ordering(super::tx_builder::TxOrdering::Bip69Lexicographic);
         let (psbt, details) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.output.len(), 3);
+        assert_eq!(psbt.unsigned_tx.output.len(), 3);
         assert_eq!(
-            psbt.global.unsigned_tx.output[0].value,
+            psbt.unsigned_tx.output[0].value,
             10_000 - details.fee.unwrap_or(0)
         );
-        assert_eq!(psbt.global.unsigned_tx.output[1].value, 10_000);
-        assert_eq!(psbt.global.unsigned_tx.output[2].value, 30_000);
+        assert_eq!(psbt.unsigned_tx.output[1].value, 10_000);
+        assert_eq!(psbt.unsigned_tx.output[2].value, 30_000);
     }
 
     #[test]
@@ -2246,12 +2241,12 @@ pub(crate) mod test {
         let mut builder = wallet.build_tx();
         builder
             .add_recipient(addr.script_pubkey(), 30_000)
-            .sighash(bitcoin::SigHashType::Single);
+            .sighash(bitcoin::EcdsaSigHashType::Single);
         let (psbt, _) = builder.finish().unwrap();
 
         assert_eq!(
             psbt.inputs[0].sighash_type,
-            Some(bitcoin::SigHashType::Single)
+            Some(bitcoin::EcdsaSigHashType::Single)
         );
     }
 
@@ -2443,7 +2438,7 @@ pub(crate) mod test {
         let (psbt, details) = builder.finish().unwrap();
 
         assert_eq!(
-            psbt.global.unsigned_tx.input.len(),
+            psbt.unsigned_tx.input.len(),
             2,
             "should add an additional input since 25_000 < 30_000"
         );
@@ -2500,7 +2495,7 @@ pub(crate) mod test {
             .policy_path(path, KeychainKind::External);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
+        assert_eq!(psbt.unsigned_tx.input[0].sequence, 0xFFFFFFFF);
     }
 
     #[test]
@@ -2519,7 +2514,7 @@ pub(crate) mod test {
             .policy_path(path, KeychainKind::External);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(psbt.global.unsigned_tx.input[0].sequence, 144);
+        assert_eq!(psbt.unsigned_tx.input[0].sequence, 144);
     }
 
     #[test]
@@ -2544,8 +2539,8 @@ pub(crate) mod test {
         // This key has an explicit origin, so it will be encoded here
         let value_bytes = Vec::<u8>::from_hex("73756c7f30000080000000800000008002000080").unwrap();
 
-        assert_eq!(psbt.global.unknown.len(), 1);
-        assert_eq!(psbt.global.unknown.get(&psbt_key), Some(&value_bytes));
+        assert_eq!(psbt.unknown.len(), 1);
+        assert_eq!(psbt.unknown.get(&psbt_key), Some(&value_bytes));
     }
 
     #[test]
@@ -2581,8 +2576,7 @@ pub(crate) mod test {
         );
 
         assert!(
-            psbt.global
-                .unsigned_tx
+            psbt.unsigned_tx
                 .input
                 .iter()
                 .any(|input| input.previous_output == utxo.outpoint),
@@ -2807,8 +2801,8 @@ pub(crate) mod test {
         // its fingerprint directly and an empty path
         let value_bytes = Vec::<u8>::from_hex("997a323b").unwrap();
 
-        assert_eq!(psbt.global.unknown.len(), 1);
-        assert_eq!(psbt.global.unknown.get(&psbt_key), Some(&value_bytes));
+        assert_eq!(psbt.unknown.len(), 1);
+        assert_eq!(psbt.unknown.get(&psbt_key), Some(&value_bytes));
     }
 
     #[test]
@@ -2955,7 +2949,7 @@ pub(crate) mod test {
         );
         assert!(details.fee.unwrap_or(0) > original_details.fee.unwrap_or(0));
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
             tx.output
@@ -3021,7 +3015,7 @@ pub(crate) mod test {
             original_details.fee.unwrap_or(0)
         );
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
             tx.output
@@ -3080,7 +3074,7 @@ pub(crate) mod test {
         assert_eq!(details.sent, original_details.sent);
         assert!(details.fee.unwrap_or(0) > original_details.fee.unwrap_or(0));
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 1);
         assert_eq!(tx.output[0].value + details.fee.unwrap_or(0), details.sent);
 
@@ -3124,7 +3118,7 @@ pub(crate) mod test {
         assert_eq!(details.sent, original_details.sent);
         assert!(details.fee.unwrap_or(0) > original_details.fee.unwrap_or(0));
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 1);
         assert_eq!(tx.output[0].value + details.fee.unwrap_or(0), details.sent);
 
@@ -3275,7 +3269,7 @@ pub(crate) mod test {
         assert_eq!(details.sent, original_details.sent + 25_000);
         assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 2);
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
@@ -3338,7 +3332,7 @@ pub(crate) mod test {
         assert_eq!(details.sent, original_details.sent + 25_000);
         assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 2);
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
@@ -3415,7 +3409,7 @@ pub(crate) mod test {
             75_000 - original_send_all_amount - details.fee.unwrap_or(0)
         );
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 2);
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
@@ -3486,7 +3480,7 @@ pub(crate) mod test {
         assert_eq!(details.fee.unwrap_or(0), 30_000);
         assert_eq!(details.received, 0);
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 2);
         assert_eq!(tx.output.len(), 1);
         assert_eq!(
@@ -3549,7 +3543,7 @@ pub(crate) mod test {
         assert_eq!(details.sent, original_details.sent + 25_000);
         assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 2);
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
@@ -3620,7 +3614,7 @@ pub(crate) mod test {
         assert_eq!(details.sent, original_details.sent + 25_000);
         assert_eq!(details.fee.unwrap_or(0) + details.received, 30_000);
 
-        let tx = &psbt.global.unsigned_tx;
+        let tx = &psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 2);
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
@@ -3778,7 +3772,7 @@ pub(crate) mod test {
         };
 
         psbt.inputs.push(dud_input);
-        psbt.global.unsigned_tx.input.push(bitcoin::TxIn::default());
+        psbt.unsigned_tx.input.push(bitcoin::TxIn::default());
         let is_final = wallet
             .sign(
                 &mut psbt,
@@ -3840,7 +3834,7 @@ pub(crate) mod test {
 
         let extracted = psbt.extract_tx();
         assert_eq!(
-            *extracted.input[0].witness[0].last().unwrap(),
+            *extracted.input[0].witness.to_vec()[0].last().unwrap(),
             sighash.as_u32() as u8,
             "The signature should have been made with the right sighash"
         );

@@ -2,7 +2,7 @@ use crate::testutils::TestIncomingTx;
 use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::sha256d;
-use bitcoin::{Address, Amount, Script, Transaction, Txid};
+use bitcoin::{Address, Amount, Script, Transaction, Txid, blockdata::witness::Witness};
 pub use bitcoincore_rpc::{Auth, Client as RpcClient, RpcApi};
 use core::str::FromStr;
 use electrsd::bitcoind::BitcoinD;
@@ -186,7 +186,7 @@ impl TestClient {
                 previous_output: OutPoint::null(),
                 script_sig: Builder::new().push_int(height).into_script(),
                 sequence: 0xFFFFFFFF,
-                witness: vec![witness_reserved_value],
+                witness: Witness::from_vec(vec![witness_reserved_value]),
             }],
             output: vec![],
         };
@@ -196,9 +196,9 @@ impl TestClient {
 
         let mut block = Block { header, txdata };
 
-        let witness_root = block.witness_root();
+        let witness_root = block.witness_root().unwrap();
         let witness_commitment =
-            Block::compute_witness_commitment(&witness_root, &coinbase_tx.input[0].witness[0]);
+            Block::compute_witness_commitment(&witness_root, &coinbase_tx.input[0].witness.to_vec()[0]);
 
         // now update and replace the coinbase tx
         let mut coinbase_witness_commitment_script = vec![0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
@@ -211,7 +211,7 @@ impl TestClient {
         block.txdata[0] = coinbase_tx;
 
         // set merkle root
-        let merkle_root = block.merkle_root();
+        let merkle_root = block.merkle_root().unwrap();
         block.header.merkle_root = merkle_root;
 
         assert!(block.check_merkle_root());
@@ -1009,6 +1009,7 @@ macro_rules! bdk_blockchain_tests {
             #[cfg(feature = "esplora")]
             fn test_broadcast() {
                 use crate::blockchain::{BroadcastError, Broadcast};
+                use bitcoin::blockdata::witness::Witness;
                 let (wallet, descriptors, mut test_client) = init_single_sig();
                 let node_addr = test_client.get_node_address();
 
@@ -1033,13 +1034,16 @@ macro_rules! bdk_blockchain_tests {
                 {
                     let mut tx = tx.clone();
                     // hose the signature
-                    tx.input[0].witness[0][0] += 42;
+                    let mut new_witness = tx.input[0].witness.to_vec();
+                    new_witness[0][0] += 42;
+                    tx.input[0].witness = Witness::from_vec(new_witness);
                     assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyRejected)));
                 }
                 {
                     let mut tx = tx.clone();
-                    // hose the signature
-                    tx.input[0].witness[1][0] += 42;
+                    let mut new_witness = tx.input[0].witness.to_vec();
+                    new_witness[1][0] += 42;
+                    tx.input[0].witness = Witness::from_vec(new_witness);
                     assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyRejected)));
                 }
 

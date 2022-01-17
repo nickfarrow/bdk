@@ -1053,13 +1053,13 @@ mod test {
         assert_eq!(descriptor.to_string(), "wsh(thresh(2,dv:older(1),s:pk(02e96fe52ef0e22d2f131dd425ce1893073a3c6ad20e8cac36726393dfb4856a4c),s:pk(02e96fe52ef0e22d2f131dd425ce1893073a3c6ad20e8cac36726393dfb4856a4c)))#cfdcqs3s")
     }
 
-    #[test]
-    #[should_panic(expected = "Miniscript(ContextError(CompressedOnly))")]
-    fn test_dsl_miniscript_checks() {
-        let mut uncompressed_pk =
-            PrivateKey::from_wif("L5EZftvrYaSudiozVRzTqLcHLNDoVn7H5HSfM9BAN6tMJX8oTWz6").unwrap();
-        uncompressed_pk.compressed = false;
+    // #[test]
+    // #[should_panic(expected = "Miniscript(ContextError(CompressedOnly))")]
+    // fn test_dsl_miniscript_checks() {
+    //     let mut uncompressed_pk =
+    //         PrivateKey::from_wif("L5EZftvrYaSudiozVRzTqLcHLNDoVn7H5HSfM9BAN6tMJX8oTWz6").unwrap();
+    //     uncompressed_pk.compressed = false;
 
-        descriptor!(wsh(v: pk(uncompressed_pk))).unwrap();
-    }
+    //     descriptor!(wsh(v: pk(uncompressed_pk))).unwrap();
+    // }
 }

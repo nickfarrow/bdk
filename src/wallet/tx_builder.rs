@@ -42,7 +42,7 @@ use std::default::Default;
 use std::marker::PhantomData;
 
 use bitcoin::util::psbt::{self, PartiallySignedTransaction as Psbt};
-use bitcoin::{OutPoint, Script, SigHashType, Transaction};
+use bitcoin::{EcdsaSigHashType as SigHashType, OutPoint, Script, Transaction};
 
 use miniscript::descriptor::DescriptorTrait;
 
@@ -105,8 +105,8 @@ impl TxBuilderContext for BumpFee {}
 /// };
 ///
 /// assert_eq!(
-///     psbt1.global.unsigned_tx.output[..2],
-///     psbt2.global.unsigned_tx.output[..2]
+///     psbt1.unsigned_tx.output[..2],
+///     psbt2.unsigned_tx.output[..2]
 /// );
 /// # Ok::<(), bdk::Error>(())
 /// ```

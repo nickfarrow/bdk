@@ -2,7 +2,7 @@
 //!
 //! see: <https://github.com/Blockstream/esplora/blob/master/API.md>
 use crate::BlockTime;
-use bitcoin::{OutPoint, Script, Transaction, TxIn, TxOut, Txid};
+use bitcoin::{OutPoint, Script, Transaction, TxIn, TxOut, Txid, blockdata::witness::Witness};
 
 #[derive(serde::Deserialize, Clone, Debug)]
 pub struct PrevOut {
@@ -18,7 +18,7 @@ pub struct Vin {
     pub prevout: Option<PrevOut>,
     pub scriptsig: Script,
     #[serde(deserialize_with = "deserialize_witness")]
-    pub witness: Vec<Vec<u8>>,
+    pub witness: Witness,
     pub sequence: u32,
     pub is_coinbase: bool,
 }
@@ -103,7 +103,7 @@ impl Tx {
     }
 }
 
-fn deserialize_witness<'de, D>(d: D) -> Result<Vec<Vec<u8>>, D::Error>
+fn deserialize_witness<'de, D>(d: D) -> Result<Witness, D::Error>
 where
     D: serde::de::Deserializer<'de>,
 {
@@ -114,4 +114,5 @@ where
         .map(|hex_str| Vec::<u8>::from_hex(&hex_str))
         .collect::<Result<Vec<Vec<u8>>, _>>()
         .map_err(serde::de::Error::custom)
+        .map(|vec_vec| Witness::from_vec(vec_vec))
 }

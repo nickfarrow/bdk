@@ -319,7 +319,6 @@ impl<Ctx: ScriptContext> ExtendedKey<Ctx> {
         match self {
             ExtendedKey::Private((mut xprv, _)) => {
                 xprv.network = network;
-                xprv.private_key.network = network;
                 Some(xprv)
             }
             ExtendedKey::Public(_) => None,
@@ -334,7 +333,7 @@ impl<Ctx: ScriptContext> ExtendedKey<Ctx> {
         secp: &Secp256k1<C>,
     ) -> bip32::ExtendedPubKey {
         let mut xpub = match self {
-            ExtendedKey::Private((xprv, _)) => bip32::ExtendedPubKey::from_private(secp, &xprv),
+            ExtendedKey::Private((xprv, _)) => bip32::ExtendedPubKey::from_priv(secp, &xprv),
             ExtendedKey::Public((xpub, _)) => xpub,
         };
 
@@ -377,7 +376,7 @@ impl<Ctx: ScriptContext> From<bip32::ExtendedPrivKey> for ExtendedKey<Ctx> {
 /// use bdk::keys::{DerivableKey, ExtendedKey, KeyError, ScriptContext};
 ///
 /// struct MyCustomKeyType {
-///     key_data: bitcoin::PrivateKey,
+///     key_data: bitcoin::secp256k1::SecretKey,
 ///     chain_code: Vec<u8>,
 ///     network: bitcoin::Network,
 /// }
@@ -410,7 +409,7 @@ impl<Ctx: ScriptContext> From<bip32::ExtendedPrivKey> for ExtendedKey<Ctx> {
 /// };
 ///
 /// struct MyCustomKeyType {
-///     key_data: bitcoin::PrivateKey,
+///     key_data: bitcoin::secp256k1::SecretKey,
 ///     chain_code: Vec<u8>,
 /// }
 ///
@@ -942,7 +941,9 @@ pub mod test {
 
         let network = Network::Bitcoin;
         let xprv = xkey.into_xprv(network).unwrap();
-        let wif = PrivateKey::from_wif(&xprv.private_key.to_wif()).unwrap();
+        let wif =
+            PrivateKey::from_wif(&bitcoin::PrivateKey::new(xprv.private_key, network).to_wif())
+                .unwrap();
         assert_eq!(wif.network, network);
 
         // test testnet wif
@@ -952,7 +953,9 @@ pub mod test {
 
         let network = Network::Testnet;
         let xprv = xkey.into_xprv(network).unwrap();
-        let wif = PrivateKey::from_wif(&xprv.private_key.to_wif()).unwrap();
+        let wif =
+            PrivateKey::from_wif(&bitcoin::PrivateKey::new(xprv.private_key, network).to_wif())
+                .unwrap();
         assert_eq!(wif.network, network);
     }
 

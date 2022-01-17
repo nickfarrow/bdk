@@ -96,21 +96,18 @@ impl<'s> MiniscriptKey for DerivedDescriptorKey<'s> {
     fn is_uncompressed(&self) -> bool {
         self.0.is_uncompressed()
     }
-    fn serialized_len(&self) -> usize {
-        self.0.serialized_len()
-    }
 }
 
 impl<'s> ToPublicKey for DerivedDescriptorKey<'s> {
     fn to_public_key(&self) -> PublicKey {
         match &self.0 {
             DescriptorPublicKey::SinglePub(ref spub) => spub.key.to_public_key(),
-            DescriptorPublicKey::XPub(ref xpub) => {
+            DescriptorPublicKey::XPub(ref xpub) => bitcoin::PublicKey::new(
                 xpub.xkey
                     .derive_pub(self.1, &xpub.derivation_path)
                     .expect("Shouldn't fail, only normal derivations")
-                    .public_key
-            }
+                    .public_key,
+            ),
         }
     }
 

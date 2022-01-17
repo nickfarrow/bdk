@@ -518,7 +518,7 @@ impl<'s> DerivedDescriptorMeta for DerivedDescriptor<'s> {
                     .expect("Derivation can't fail");
 
                 answer.insert(
-                    derived_pubkey.public_key,
+                    bitcoin::PublicKey::new(derived_pubkey.public_key),
                     (xpub.root_fingerprint(secp), xpub.full_path(&[])),
                 );
             }
