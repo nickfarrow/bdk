@@ -32,8 +32,9 @@ use bitcoin::{
     Address, EcdsaSigHashType as SigHashType, Network, OutPoint, Script, Transaction, TxOut, Txid,
 };
 
-use miniscript::descriptor::DescriptorTrait;
+use miniscript::descriptor::{Descriptor, DescriptorTrait};
 use miniscript::psbt::PsbtInputSatisfier;
+use miniscript::ToPublicKey;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace};
@@ -1477,6 +1478,11 @@ where
                 psbt_input.non_witness_utxo = Some(prev_tx);
             }
         }
+
+        if let Descriptor::Tr(tr) = derived_descriptor {
+            psbt_input.tap_internal_key = Some(tr.internal_key().to_x_only_pubkey());
+        };
+
         Ok(psbt_input)
     }
 
@@ -3656,10 +3662,9 @@ pub(crate) mod test {
         assert_eq!(extracted.input[0].witness.len(), 2);
     }
 
-
     #[test]
     fn test_sign_single_xprv_tr() {
-        let (wallet, _, _) = get_funded_wallet("tr(tprv8ZgxMBicQKsPd3EupYiPRhaMooHKUHJxNsTfYuScep13go8QFfHdtkG9nRkFGb7busX4isf6X9dURGCoKgitaApQ6MupRhZMcELAxTBRJgS/*)");
+        let (wallet, _, _) = get_funded_wallet("tr(tprv8ZgxMBicQKsPd3EupYiPRhaMooHKUHJxNsTfYuScep13go8QFfHdtkG9nRkFGb7busX4isf6X9dURGCoKgitaApQ6MupRhZMcELAxTBRJgS)");
         let addr = wallet.get_address(New).unwrap();
         let mut builder = wallet.build_tx();
         builder.drain_to(addr.script_pubkey()).drain_wallet();
@@ -3671,7 +3676,6 @@ pub(crate) mod test {
         let extracted = psbt.extract_tx();
         assert_eq!(extracted.input[0].witness.len(), 1);
     }
-
 
     #[test]
     fn test_sign_single_xprv_with_master_fingerprint_and_path() {

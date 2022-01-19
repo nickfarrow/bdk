@@ -369,12 +369,8 @@ macro_rules! bdk_blockchain_tests {
                 Wallet::new(&descriptors.0.to_string(), descriptors.1.as_ref(), Network::Regtest, MemoryDatabase::new(), get_blockchain(test_client)).unwrap()
             }
 
-            fn init_single_sig() -> (Wallet<$blockchain, MemoryDatabase>, (String, Option<String>), TestClient) {
+            fn _init_single_sig(descriptors: (String, Option<String>)) -> (Wallet<$blockchain, MemoryDatabase>, (String, Option<String>), TestClient) {
                 let _ = env_logger::try_init();
-
-                let descriptors = testutils! {
-                    @descriptors ( "wpkh(Alice)" ) ( "wpkh(Alice)" ) ( @keys ( "Alice" => (@generate_xprv "/44'/0'/0'/0/*", "/44'/0'/0'/1/*") ) )
-                };
 
                 let test_client = TestClient::default();
                 let wallet = get_wallet_from_descriptors(&descriptors, &test_client);
@@ -384,6 +380,20 @@ macro_rules! bdk_blockchain_tests {
                 wallet.sync(noop_progress(), None).unwrap();
 
                 (wallet, descriptors, test_client)
+            }
+
+            fn init_single_sig() -> (Wallet<$blockchain, MemoryDatabase>, (String, Option<String>), TestClient) {
+                let descriptors = testutils! {
+                    @descriptors ( "wpkh(Alice)" ) ( "wpkh(Alice)" ) ( @keys ( "Alice" => (@generate_xprv "/44'/0'/0'/0/*", "/44'/0'/0'/1/*") ) )
+                };
+                _init_single_sig(descriptors)
+            }
+
+            fn init_single_sig_tr() -> (Wallet<$blockchain, MemoryDatabase>, (String, Option<String>), TestClient) {
+                let descriptors = testutils! {
+                    @descriptors ( "tr(Alice)" ) ( "tr(Alice)" ) ( @keys ( "Alice" => (@generate_xprv "/86'/0'/0'/0/*", "/86'/0'/0'/1/*") ) )
+                };
+                _init_single_sig(descriptors)
             }
 
             #[test]
@@ -580,6 +590,34 @@ macro_rules! bdk_blockchain_tests {
             #[test]
             fn test_sync_after_send() {
                 let (wallet, descriptors, mut test_client) = init_single_sig();
+                println!("{}", descriptors.0);
+                let node_addr = test_client.get_node_address();
+
+                test_client.receive(testutils! {
+                    @tx ( (@external descriptors, 0) => 50_000 )
+                });
+
+                wallet.sync(noop_progress(), None).unwrap();
+                assert_eq!(wallet.get_balance().unwrap(), 50_000, "incorrect balance");
+
+                let mut builder = wallet.build_tx();
+                builder.add_recipient(node_addr.script_pubkey(), 25_000);
+                let (mut psbt, details) = builder.finish().unwrap();
+                let finalized = wallet.sign(&mut psbt, Default::default()).unwrap();
+                assert!(finalized, "Cannot finalize transaction");
+                let tx = psbt.extract_tx();
+                println!("{}", bitcoin::consensus::encode::serialize_hex(&tx));
+                wallet.broadcast(&tx).unwrap();
+                wallet.sync(noop_progress(), None).unwrap();
+                assert_eq!(wallet.get_balance().unwrap(), details.received, "incorrect balance after send");
+
+                assert_eq!(wallet.list_transactions(false).unwrap().len(), 2, "incorrect number of txs");
+                assert_eq!(wallet.list_unspent().unwrap().len(), 1, "incorrect number of unspents");
+            }
+
+            #[test]
+            fn test_sync_after_send_tr() {
+                let (wallet, descriptors, mut test_client) = init_single_sig_tr();
                 println!("{}", descriptors.0);
                 let node_addr = test_client.get_node_address();
 
