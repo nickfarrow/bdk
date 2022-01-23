@@ -424,6 +424,15 @@ impl<K: DerivableKey<Tap>> DescriptorTemplate for Bip86<K> {
     }
 }
 
+/// TODO
+pub struct Bip86Public<K: DerivableKey<Tap>>(pub K, pub bip32::Fingerprint, pub KeychainKind);
+
+impl<K: DerivableKey<Tap>> DescriptorTemplate for Bip86Public<K> {
+    fn build(self) -> Result<DescriptorTemplateOut, DescriptorError> {
+        Tr(taproot::make_bipxx_public(86, self.0, self.1, self.2)?).build()
+    }
+}
+
 macro_rules! expand_make_bipxx {
     ( $mod_name:ident, $ctx:ty ) => {
         mod $mod_name {
@@ -491,16 +500,17 @@ mod test {
     use crate::descriptor::derived::AsDerived;
     use crate::descriptor::{DescriptorError, DescriptorMeta};
     use crate::keys::ValidNetworks;
-    use bitcoin::network::constants::Network::Regtest;
+    use bitcoin::network::constants::Network::{Bitcoin, Regtest};
     use bitcoin::secp256k1::Secp256k1;
     use miniscript::descriptor::{DescriptorPublicKey, DescriptorTrait, KeyMap};
     use miniscript::Descriptor;
 
     // verify template descriptor generates expected address(es)
-    fn check(
+    fn _check(
         desc: Result<(Descriptor<DescriptorPublicKey>, KeyMap, ValidNetworks), DescriptorError>,
         is_witness: bool,
         is_fixed: bool,
+        network: Network,
         expected: &[&str],
     ) {
         let secp = Secp256k1::new();
@@ -515,9 +525,27 @@ mod test {
             } else {
                 desc.as_derived(index, &secp)
             };
-            let address = child_desc.address(Regtest).unwrap();
+            let address = child_desc.address(network).unwrap();
             assert_eq!(address.to_string(), *expected.get(i).unwrap());
         }
+    }
+
+    fn check(
+        desc: Result<(Descriptor<DescriptorPublicKey>, KeyMap, ValidNetworks), DescriptorError>,
+        is_witness: bool,
+        is_fixed: bool,
+        expected: &[&str],
+    ) {
+        _check(desc, is_witness, is_fixed, Regtest, expected)
+    }
+
+    fn check_mainnet(
+        desc: Result<(Descriptor<DescriptorPublicKey>, KeyMap, ValidNetworks), DescriptorError>,
+        is_witness: bool,
+        is_fixed: bool,
+        expected: &[&str],
+    ) {
+        _check(desc, is_witness, is_fixed, Bitcoin, expected)
     }
 
     // P2PKH
@@ -751,6 +779,49 @@ mod test {
                 "bcrt1q694twxtjn4nnrvnyvra769j0a23rllj5c6cgwp",
                 "bcrt1qhlac3c5ranv5w5emlnqs7wxhkxt8maelylcarp",
             ],
+        );
+    }
+
+    // BIP86 `tr(key/84'/0'/0'/{0,1}/*)`
+    #[test]
+    fn test_bip86_template() {
+        let prvkey = bitcoin::util::bip32::ExtendedPrivKey::from_str("xprv9s21ZrQH143K3GJpoapnV8SFfukcVBSfeCficPSGfubmSFDxo1kuHnLisriDvSnRRuL2Qrg5ggqHKNVpxR86QEC8w35uxmGoggxtQTPvfUu").unwrap();
+        check_mainnet(
+            Bip86(prvkey, KeychainKind::External).build(),
+            true,
+            false,
+            &[
+                "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr",
+                "bc1p4qhjn9zdvkux4e44uhx8tc55attvtyu358kutcqkudyccelu0was9fqzwh",
+            ],
+        );
+        check_mainnet(
+            Bip86(prvkey, KeychainKind::Internal).build(),
+            true,
+            false,
+            &["bc1p3qkhfews2uk44qtvauqyr2ttdsw7svhkl9nkm9s9c3x4ax5h60wqwruhk7"],
+        );
+    }
+
+    // BIP86 public `tr(key/{0,1}/*)`
+    #[test]
+    fn test_bip86_public_template() {
+        let pubkey = bitcoin::util::bip32::ExtendedPubKey::from_str("xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ").unwrap();
+        let fingerprint = bitcoin::util::bip32::Fingerprint::from_str("73c5da0a").unwrap();
+        check_mainnet(
+            Bip86Public(pubkey, fingerprint, KeychainKind::External).build(),
+            true,
+            false,
+            &[
+                "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr",
+                "bc1p4qhjn9zdvkux4e44uhx8tc55attvtyu358kutcqkudyccelu0was9fqzwh",
+            ],
+        );
+        check_mainnet(
+            Bip86Public(pubkey, fingerprint, KeychainKind::Internal).build(),
+            true,
+            false,
+            &["bc1p3qkhfews2uk44qtvauqyr2ttdsw7svhkl9nkm9s9c3x4ax5h60wqwruhk7"],
         );
     }
 }
