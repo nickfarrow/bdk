@@ -16,8 +16,8 @@ pub mod blockchain_tests;
 use bitcoin::secp256k1::{Secp256k1, Verification};
 use bitcoin::{Address, PublicKey};
 
-use miniscript::descriptor::{Cached, DescriptorPublicKey};
-use miniscript::{Descriptor, MiniscriptKey, TranslatePk};
+use miniscript::descriptor::{DescriptorPublicKey, SinglePubKey};
+use miniscript::{Descriptor, MiniscriptKey, ToPublicKey, TranslatePk};
 
 #[derive(Clone, Debug)]
 pub struct TestIncomingOutput {
@@ -69,7 +69,7 @@ pub trait TranslateDescriptor {
         &self,
         secp: &Secp256k1<C>,
         index: u32,
-    ) -> Descriptor<PublicKey, Cached>;
+    ) -> Descriptor<PublicKey>;
 }
 
 impl TranslateDescriptor for Descriptor<DescriptorPublicKey> {
@@ -77,7 +77,7 @@ impl TranslateDescriptor for Descriptor<DescriptorPublicKey> {
         &self,
         secp: &Secp256k1<C>,
         index: u32,
-    ) -> Descriptor<PublicKey, Cached> {
+    ) -> Descriptor<PublicKey> {
         let translate = |key: &DescriptorPublicKey| -> PublicKey {
             match key {
                 DescriptorPublicKey::XPub(xpub) => bitcoin::PublicKey::new(
@@ -86,13 +86,15 @@ impl TranslateDescriptor for Descriptor<DescriptorPublicKey> {
                         .expect("hardened derivation steps")
                         .public_key,
                 ),
-                DescriptorPublicKey::SinglePub(key) => key.key,
+                DescriptorPublicKey::SinglePub(key) => match key.key {
+                    SinglePubKey::FullKey(key) => key.to_public_key(),
+                    SinglePubKey::XOnly(key) => key.to_public_key(),
+                },
             }
         };
 
         self.derive(index)
             .translate_pk_infallible(|pk| translate(pk), |pkh| translate(pkh).to_pubkeyhash())
-            .cache_spend_info(secp)
     }
 }
 

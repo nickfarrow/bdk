@@ -116,5 +116,5 @@ features = ["compiler", "electrum", "esplora", "ureq", "compact_filters", "rpc",
 rustdoc-args = ["--cfg", "docsrs"]
 
 [patch.crates-io]
-bitcoin = { git = "https://github.com/rust-bitcoin/rust-bitcoin.git", rev = "0e2e55971275da64ceb62e8991a0a5fa962cb8b1" }
-miniscript = { git = "https://github.com/sanket1729/rust-miniscript.git", rev = "8946f5c82fa15e0d59f1e28ef9ee627eb7942010" }
+bitcoin = {git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "0e2e55971275da64ceb62e8991a0a5fa962cb8b1"}
+miniscript = { git = "https://github.com/rust-bitcoin/rust-miniscript", rev = "6a89bd0d1aa2a4b2e78d624276471727bf61b753" }

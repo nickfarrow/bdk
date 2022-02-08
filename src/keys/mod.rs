@@ -830,7 +830,7 @@ impl<Ctx: ScriptContext> IntoDescriptorKey<Ctx> for DescriptorPublicKey {
 impl<Ctx: ScriptContext> IntoDescriptorKey<Ctx> for PublicKey {
     fn into_descriptor_key(self) -> Result<DescriptorKey<Ctx>, KeyError> {
         DescriptorPublicKey::SinglePub(DescriptorSinglePub {
-            key: self,
+            key: miniscript::descriptor::SinglePubKey::FullKey(self),
             origin: None,
         })
         .into_descriptor_key()

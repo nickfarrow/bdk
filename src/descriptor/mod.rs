@@ -22,7 +22,7 @@ use bitcoin::util::psbt;
 use bitcoin::{Network, PublicKey, Script, TxOut};
 
 use miniscript::descriptor::{
-    Cached, DescriptorPublicKey, DescriptorType, DescriptorXKey, UnCached, Wildcard,
+    DescriptorPublicKey, DescriptorType, DescriptorXKey, InnerXKey, Wildcard,
 };
 pub use miniscript::{descriptor::KeyMap, Descriptor, Legacy, Miniscript, ScriptContext, Segwitv0};
 use miniscript::{DescriptorTrait, ForEachKey, TranslatePk};
@@ -48,10 +48,10 @@ use crate::wallet::signer::SignersContainer;
 use crate::wallet::utils::SecpCtx;
 
 /// Alias for a [`Descriptor`] that can contain extended keys using [`DescriptorPublicKey`]
-pub type ExtendedDescriptor<C = UnCached> = Descriptor<DescriptorPublicKey, C>;
+pub type ExtendedDescriptor = Descriptor<DescriptorPublicKey>;
 
 /// Alias for a [`Descriptor`] that contains extended **derived** keys
-pub type DerivedDescriptor<'s> = Descriptor<DerivedDescriptorKey<'s>, Cached>;
+pub type DerivedDescriptor<'s> = Descriptor<DerivedDescriptorKey<'s>>;
 
 /// Alias for the type of maps that represent derivation paths in a [`psbt::Input`] or
 /// [`psbt::Output`]
@@ -451,8 +451,7 @@ impl DescriptorMeta for ExtendedDescriptor {
             // TODO: add pk() here
             DescriptorType::Pkh | DescriptorType::Wpkh | DescriptorType::ShWpkh
                 if utxo.is_some()
-                    && descriptor.script_pubkey().unwrap()
-                        == utxo.as_ref().unwrap().script_pubkey =>
+                    && descriptor.script_pubkey() == utxo.as_ref().unwrap().script_pubkey =>
             {
                 Some(descriptor)
             }

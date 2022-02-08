@@ -91,11 +91,13 @@ use std::sync::Arc;
 use bitcoin::blockdata::opcodes;
 use bitcoin::blockdata::script::Builder as ScriptBuilder;
 use bitcoin::hashes::{hash160, Hash};
-use bitcoin::secp256k1::{KeyPair, Message, Secp256k1, XOnlyPublicKey};
+use bitcoin::schnorr::{KeyPair, XOnlyPublicKey};
+use bitcoin::secp256k1::{Message, Secp256k1};
 use bitcoin::util::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, Fingerprint};
-use bitcoin::util::{psbt, schnorr, sighash, taproot};
+use bitcoin::util::{psbt, schnorr, taproot};
 use bitcoin::{EcdsaSigHashType as SigHashType, PrivateKey, Script, SigHash};
 
+use miniscript::bitcoin::util::sighash;
 use miniscript::descriptor::{DescriptorSecretKey, DescriptorSinglePriv, DescriptorXKey, KeyMap};
 use miniscript::{Legacy, MiniscriptKey, Segwitv0};
 
@@ -108,6 +110,8 @@ use crate::descriptor::XKeyUtils;
 pub enum SignerId {
     /// Bitcoin HASH160 (RIPEMD160 after SHA256) hash of an ECDSA public key
     PkHash(hash160::Hash),
+    /// Schnorr xonly key
+    XOnly(XOnlyPublicKey),
     /// The fingerprint of a BIP32 extended key
     Fingerprint(Fingerprint),
     /// Dummy identifier
@@ -280,7 +284,7 @@ fn tap_signature(
     secp: &SecpCtx,
 ) -> Result<(), SignerError> {
     let mut keypair = KeyPair::from_secret_key(secp, key.key);
-    let public_key = XOnlyPublicKey::from_keypair(&keypair);
+    let public_key = keypair.public_key();
 
     if let Some(internal_key) = psbt.inputs[input_index].tap_internal_key {
         if internal_key != public_key {
@@ -361,10 +365,6 @@ impl Signer for PrivateKey {
             &Message::from_slice(&hash.into_inner()[..]).unwrap(),
             &self.key,
         );
-
-        // let mut final_signature = Vec::with_capacity(75);
-        // final_signature.extend_from_slice(&signature.serialize_der());
-        // final_signature.push(sighash.as_u32() as u8);
 
         psbt.inputs[input_index].partial_sigs.insert(
             pubkey,

@@ -266,7 +266,7 @@ where
             .get_descriptor_for_keychain(keychain)
             .as_derived(current_index, &self.secp);
 
-        let script_pubkey = derived_key.script_pubkey().unwrap();
+        let script_pubkey = derived_key.script_pubkey();
 
         let found_used = self
             .list_transactions(true)?
@@ -1186,7 +1186,7 @@ where
         let derived_descriptor = descriptor.as_derived(index, &self.secp);
 
         let hd_keypaths = derived_descriptor.get_hd_keypaths(&self.secp)?;
-        let script = derived_descriptor.script_pubkey().unwrap();
+        let script = derived_descriptor.script_pubkey();
 
         for validator in &self.address_validators {
             validator.validate(keychain, &hd_keypaths, &script)?;
@@ -1234,10 +1234,7 @@ where
         let start_time = time::Instant::new();
         for i in from..(from + count) {
             address_batch.set_script_pubkey(
-                &descriptor
-                    .as_derived(i, &self.secp)
-                    .script_pubkey()
-                    .unwrap(),
+                &descriptor.as_derived(i, &self.secp).script_pubkey(),
                 keychain,
                 i,
             )?;
@@ -1694,7 +1691,6 @@ pub fn get_funded_wallet(
 #[cfg(test)]
 pub(crate) mod test {
     use bitcoin::{util::psbt, Network};
-    use miniscript::descriptor::Cached;
 
     use crate::database::Database;
     use crate::types::KeychainKind;
@@ -2263,12 +2259,12 @@ pub(crate) mod test {
         let mut builder = wallet.build_tx();
         builder
             .add_recipient(addr.script_pubkey(), 30_000)
-            .sighash(bitcoin::EcdsaSigHashType::Single);
+            .sighash(bitcoin::SigHashType::Single);
         let (psbt, _) = builder.finish().unwrap();
 
         assert_eq!(
             psbt.inputs[0].sighash_type,
-            Some(bitcoin::EcdsaSigHashType::Single)
+            Some(bitcoin::SigHashType::Single)
         );
     }
 
@@ -3787,12 +3783,11 @@ pub(crate) mod test {
         let dud_input = bitcoin::util::psbt::Input {
             witness_utxo: Some(TxOut {
                 value: 100_000,
-                script_pubkey: miniscript::Descriptor::<bitcoin::PublicKey, Cached>::from_str(
+                script_pubkey: miniscript::Descriptor::<bitcoin::PublicKey>::from_str(
                     "wpkh(025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee6357)",
                 )
                 .unwrap()
-                .script_pubkey()
-                .unwrap(),
+                .script_pubkey(),
             }),
             ..Default::default()
         };

@@ -19,6 +19,7 @@ use std::ops::Deref;
 use bitcoin::hashes::hash160;
 use bitcoin::PublicKey;
 
+use miniscript::descriptor::SinglePubKey;
 pub use miniscript::{
     descriptor::KeyMap, descriptor::Wildcard, Descriptor, DescriptorPublicKey, Legacy, Miniscript,
     ScriptContext, Segwitv0,
@@ -103,7 +104,10 @@ impl<'s> MiniscriptKey for DerivedDescriptorKey<'s> {
 impl<'s> ToPublicKey for DerivedDescriptorKey<'s> {
     fn to_public_key(&self) -> PublicKey {
         match &self.0 {
-            DescriptorPublicKey::SinglePub(ref spub) => spub.key.to_public_key(),
+            DescriptorPublicKey::SinglePub(ref spub) => match spub.key {
+                SinglePubKey::FullKey(key) => key.to_public_key(),
+                SinglePubKey::XOnly(key) => key.to_public_key(),
+            },
             DescriptorPublicKey::XPub(ref xpub) => bitcoin::PublicKey::new(
                 xpub.xkey
                     .derive_pub(self.1, &xpub.derivation_path)
@@ -130,12 +134,10 @@ pub(crate) trait AsDerived {
 
 impl AsDerived for Descriptor<DescriptorPublicKey> {
     fn as_derived<'s>(&self, index: u32, secp: &'s SecpCtx) -> DerivedDescriptor<'s> {
-        self.derive(index)
-            .translate_pk_infallible(
-                |key| DerivedDescriptorKey::new(key.clone(), secp),
-                |key| DerivedDescriptorKey::new(key.clone(), secp),
-            )
-            .cache_spend_info(secp)
+        self.derive(index).translate_pk_infallible(
+            |key| DerivedDescriptorKey::new(key.clone(), secp),
+            |key| DerivedDescriptorKey::new(key.clone(), secp),
+        )
     }
 
     fn as_derived_fixed<'s>(&self, secp: &'s SecpCtx) -> DerivedDescriptor<'s> {
