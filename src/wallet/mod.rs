@@ -32,6 +32,7 @@ use bitcoin::{
     Address, EcdsaSigHashType as SigHashType, Network, OutPoint, Script, Transaction, TxOut, Txid,
 };
 
+use miniscript::descriptor::Descriptor;
 use miniscript::descriptor::DescriptorTrait;
 use miniscript::psbt::PsbtInputSatisfier;
 
@@ -63,9 +64,9 @@ use crate::database::{BatchDatabase, BatchOperations, DatabaseUtils, SyncTime};
 use crate::descriptor::derived::AsDerived;
 use crate::descriptor::policy::BuildSatisfaction;
 use crate::descriptor::{
-    get_checksum, into_wallet_descriptor_checked, DerivedDescriptor, DerivedDescriptorMeta,
-    DescriptorMeta, DescriptorScripts, ExtendedDescriptor, ExtractPolicy, IntoWalletDescriptor,
-    Policy, XKeyUtils,
+    get_checksum, into_wallet_descriptor_checked, DerivedDescriptor, DerivedDescriptorKey,
+    DerivedDescriptorMeta, DescriptorMeta, DescriptorScripts, ExtendedDescriptor, ExtractPolicy,
+    IntoWalletDescriptor, Policy, XKeyUtils,
 };
 use crate::error::Error;
 use crate::psbt::PsbtUtils;
@@ -193,6 +194,14 @@ pub enum AddressIndex {
     /// caller is untrusted; for example when deriving donation addresses on-demand for a public
     /// web page.
     LastUnused,
+    /// Return the address for the first address in the keychain that has not been used in a received
+    /// transaction. Otherwise return a new address as with [`AddressIndex::New`].
+    ///
+    /// Use with caution, if the wallet has not yet detected an address has been used it could
+    /// return an already used address. This function is primarily meant for situations where the
+    /// caller is untrusted; for example when deriving donation addresses on-demand for a public
+    /// web page.
+    FirstUnused,
     /// Return the address for a specific descriptor index. Does not change the current descriptor
     /// index used by `AddressIndex::New` and `AddressIndex::LastUsed`.
     ///
@@ -256,6 +265,40 @@ where
             .map_err(|_| Error::ScriptDoesntHaveAddressForm)
     }
 
+    // Return vector of unused address indexes
+    fn get_unused_key_indexes(&self, keychain: KeychainKind) -> Result<Vec<u32>, Error> {
+        let current_index = self.fetch_index(keychain)?;
+
+        let derived_keys: Vec<Descriptor<DerivedDescriptorKey>> = (0..current_index + 1)
+            .map(|i| {
+                self.get_descriptor_for_keychain(keychain)
+                    .as_derived(i, &self.secp)
+            })
+            .collect();
+
+        let unused_key_indexes: Vec<u32> = derived_keys
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter_map(|(i, key)| {
+                if !self
+                    .list_transactions(true)
+                    .expect("getting transactions")
+                    .iter()
+                    .flat_map(|tx_details| tx_details.transaction.as_ref())
+                    .flat_map(|tx| tx.output.iter())
+                    .any(|o| o.script_pubkey == key.script_pubkey())
+                {
+                    Some(i as u32)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(unused_key_indexes)
+    }
+
     // Return the the last previously derived address if it has not been used in a received
     // transaction. Otherwise return a new address using [`Wallet::get_new_address`].
     fn get_unused_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
@@ -282,6 +325,26 @@ where
                 .map(|address| AddressInfo {
                     address,
                     index: current_index,
+                })
+                .map_err(|_| Error::ScriptDoesntHaveAddressForm)
+        }
+    }
+
+    // Return the the first address in the keychain which has not been a recipient of a transaction
+    fn get_first_unused_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
+        let unused_key_indexes = self.get_unused_key_indexes(keychain)?;
+        if (unused_key_indexes.len() as u32) < 1 {
+            self.get_new_address(keychain)
+        } else {
+            let derived_key = self
+                .get_descriptor_for_keychain(keychain)
+                .as_derived(unused_key_indexes[0], &self.secp);
+
+            derived_key
+                .address(self.network)
+                .map(|address| AddressInfo {
+                    address,
+                    index: unused_key_indexes[0],
                 })
                 .map_err(|_| Error::ScriptDoesntHaveAddressForm)
         }
@@ -330,6 +393,7 @@ where
         match address_index {
             AddressIndex::New => self.get_new_address(keychain),
             AddressIndex::LastUnused => self.get_unused_address(keychain),
+            AddressIndex::FirstUnused => self.get_first_unused_address(keychain),
             AddressIndex::Peek(index) => self.peek_address(index, keychain),
             AddressIndex::Reset(index) => self.reset_address(index, keychain),
         }
@@ -1008,7 +1072,6 @@ where
             )?),
         }
     }
-
 
     /// get the signers
     pub fn signers(&self) -> (&SignersContainer, &SignersContainer) {
