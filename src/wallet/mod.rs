@@ -283,7 +283,7 @@ where
             .filter_map(|(i, key)| {
                 if !self
                     .list_transactions(true)
-                    .expect("getting transactions")
+                    .expect("getting transaction list")
                     .iter()
                     .flat_map(|tx_details| tx_details.transaction.as_ref())
                     .flat_map(|tx| tx.output.iter())
@@ -301,32 +301,23 @@ where
 
     // Return the the last previously derived address if it has not been used in a received
     // transaction. Otherwise return a new address using [`Wallet::get_new_address`].
-    fn get_unused_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
-        let current_index = self.fetch_index(keychain)?;
+    fn get_last_unused_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
+        let mut unused_key_indexes = self.get_unused_key_indexes(keychain)?;
+        match unused_key_indexes.pop() {
+            None => self.get_new_address(keychain),
+            Some(address_index) => {
+                let derived_key = self
+                    .get_descriptor_for_keychain(keychain)
+                    .as_derived(address_index, &self.secp);
 
-        let derived_key = self
-            .get_descriptor_for_keychain(keychain)
-            .as_derived(current_index, &self.secp);
-
-        let script_pubkey = derived_key.script_pubkey();
-
-        let found_used = self
-            .list_transactions(true)?
-            .iter()
-            .flat_map(|tx_details| tx_details.transaction.as_ref())
-            .flat_map(|tx| tx.output.iter())
-            .any(|o| o.script_pubkey == script_pubkey);
-
-        if found_used {
-            self.get_new_address(keychain)
-        } else {
-            derived_key
-                .address(self.network)
-                .map(|address| AddressInfo {
-                    address,
-                    index: current_index,
-                })
-                .map_err(|_| Error::ScriptDoesntHaveAddressForm)
+                derived_key
+                    .address(self.network)
+                    .map(|address| AddressInfo {
+                        address,
+                        index: address_index,
+                    })
+                    .map_err(|_| Error::ScriptDoesntHaveAddressForm)
+            }
         }
     }
 
@@ -392,10 +383,81 @@ where
     ) -> Result<AddressInfo, Error> {
         match address_index {
             AddressIndex::New => self.get_new_address(keychain),
-            AddressIndex::LastUnused => self.get_unused_address(keychain),
+            AddressIndex::LastUnused => self.get_last_unused_address(keychain),
             AddressIndex::FirstUnused => self.get_first_unused_address(keychain),
             AddressIndex::Peek(index) => self.peek_address(index, keychain),
             AddressIndex::Reset(index) => self.reset_address(index, keychain),
+        }
+    }
+
+    /// Return a Vec of n derived addresses using the keychain.
+    /// The address indexes can be any of: New, LastUnused, or FirstUnused
+    /// If less than n unused addresses are returned, the rest will be populated by new addresses.
+    /// If none of the keys in the descriptor are derivable
+    /// (ie. does not end with /*) then the same address will always be returned for any [`AddressIndex`].
+    pub fn get_batch_addresses(
+        &self,
+        n: usize,
+        address_index: AddressIndex,
+        keychain: KeychainKind,
+    ) -> Result<Vec<AddressInfo>, Error> {
+        match address_index {
+            AddressIndex::New => {
+                let mut addresses = Vec::new();
+                for _ in 0..n {
+                    addresses.push(self.get_new_address(keychain)?);
+                }
+                Ok(addresses)
+            }
+            AddressIndex::LastUnused => {
+                let unused_key_indexes = self.get_unused_key_indexes(keychain)?;
+                let mut addresses = unused_key_indexes
+                    .iter()
+                    .rev()
+                    .map(|i| {
+                        let derived_key = self
+                            .get_descriptor_for_keychain(keychain)
+                            .as_derived(*i, &self.secp);
+
+                        derived_key
+                            .address(self.network)
+                            .map(|address| AddressInfo { address, index: *i })
+                            .map_err(|_| Error::ScriptDoesntHaveAddressForm)
+                    })
+                    .take(n)
+                    .collect::<Result<Vec<_>, _>>()?;
+                for _ in 0..(n - addresses.len()) {
+                    addresses.push(self.get_new_address(keychain)?)
+                }
+                Ok(addresses)
+            }
+            AddressIndex::FirstUnused => {
+                let unused_key_indexes = self.get_unused_key_indexes(keychain)?;
+                let mut addresses = unused_key_indexes
+                    .iter()
+                    .map(|i| {
+                        let derived_key = self
+                            .get_descriptor_for_keychain(keychain)
+                            .as_derived(*i, &self.secp);
+
+                        derived_key
+                            .address(self.network)
+                            .map(|address| AddressInfo { address, index: *i })
+                            .map_err(|_| Error::ScriptDoesntHaveAddressForm)
+                    })
+                    .take(n)
+                    .collect::<Result<Vec<_>, _>>()?;
+                for _ in 0..(n - addresses.len()) {
+                    addresses.push(self.get_new_address(keychain)?)
+                }
+                Ok(addresses)
+            }
+            AddressIndex::Peek(_) => Err(Error::Generic(
+                "You can not peek at multiple addresses.".to_string(),
+            )),
+            AddressIndex::Reset(_) => Err(Error::Generic(
+                "You can not reset at multiple addresses.".to_string(),
+            )),
         }
     }
 
