@@ -390,9 +390,9 @@ where
         }
     }
 
-    /// Return a Vec of n derived addresses using the keychain.
-    /// The address indexes can be any of: New, LastUnused, or FirstUnused
-    /// If less than n unused addresses are returned, the rest will be populated by new addresses.
+    /// Return vector of derived addresses from keychain.
+    /// The address indexing can be any of: New, LastUnused, or FirstUnused
+    /// If less than n unused addresses are found, the remaining will be populated by new addresses.
     /// If none of the keys in the descriptor are derivable
     /// (ie. does not end with /*) then the same address will always be returned for any [`AddressIndex`].
     pub fn get_batch_addresses(
@@ -1810,7 +1810,7 @@ pub(crate) mod test {
 
     use super::*;
     use crate::signer::{SignOptions, SignerError};
-    use crate::wallet::AddressIndex::{LastUnused, New, Peek, Reset};
+    use crate::wallet::AddressIndex::{FirstUnused, LastUnused, New, Peek, Reset};
 
     #[test]
     fn test_cache_addresses_fixed() {
@@ -4014,6 +4014,175 @@ pub(crate) mod test {
         assert_eq!(
             wallet.get_address(LastUnused).unwrap().to_string(),
             "tb1q4er7kxx6sssz3q7qp7zsqsdx4erceahhax77d7"
+        );
+    }
+
+    #[test]
+    fn test_firstunused_address() {
+        let descriptor = "wpkh(tpubEBr4i6yk5nf5DAaJpsi9N2pPYBeJ7fZ5Z9rmN4977iYLCGco1VyjB9tvvuvYtfZzjD5A8igzgw3HeWeeKFmanHYqksqZXYXGsw5zjnj7KM9/*)";
+        let descriptors = testutils!(@descriptors (descriptor));
+        let wallet = Wallet::new_offline(
+            &descriptors.0,
+            None,
+            Network::Testnet,
+            MemoryDatabase::new(),
+        )
+        .unwrap();
+
+        let _addresses = wallet
+            .get_batch_addresses(3, AddressIndex::New, KeychainKind::External)
+            .unwrap();
+
+        assert_eq!(
+            wallet.get_address(FirstUnused).unwrap().to_string(),
+            "tb1q6yn66vajcctph75pvylgkksgpp6nq04ppwct9a"
+        );
+
+        // use the first address
+        crate::populate_test_db!(
+            wallet.database.borrow_mut(),
+            testutils! (@tx ( (@external descriptors, 0) => 25_000 ) (@confirmations 1)),
+            Some(100),
+        );
+
+        assert_eq!(
+            wallet.get_address(FirstUnused).unwrap().to_string(),
+            "tb1q4er7kxx6sssz3q7qp7zsqsdx4erceahhax77d7"
+        );
+    }
+
+    #[test]
+    fn test_batch_new_address() {
+        let descriptor = "wpkh(tpubEBr4i6yk5nf5DAaJpsi9N2pPYBeJ7fZ5Z9rmN4977iYLCGco1VyjB9tvvuvYtfZzjD5A8igzgw3HeWeeKFmanHYqksqZXYXGsw5zjnj7KM9/*)";
+        let descriptors = testutils!(@descriptors (descriptor));
+        let wallet = Wallet::new_offline(
+            &descriptors.0,
+            None,
+            Network::Testnet,
+            MemoryDatabase::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            wallet
+                .get_batch_addresses(4, AddressIndex::New, KeychainKind::External)
+                .unwrap(),
+            vec![
+                AddressInfo {
+                    index: 0,
+                    address: Address::from_str("tb1q6yn66vajcctph75pvylgkksgpp6nq04ppwct9a")
+                        .unwrap(),
+                },
+                AddressInfo {
+                    index: 1,
+                    address: Address::from_str("tb1q4er7kxx6sssz3q7qp7zsqsdx4erceahhax77d7")
+                        .unwrap(),
+                },
+                AddressInfo {
+                    index: 2,
+                    address: Address::from_str("tb1qzntf2mqex4ehwkjlfdyy3ewdlk08qkvkvrz7x2")
+                        .unwrap(),
+                },
+                AddressInfo {
+                    index: 3,
+                    address: Address::from_str("tb1q32a23q6u3yy89l8svrt80a54h06qvn7gnuvsen")
+                        .unwrap(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_batch_lastunused_address() {
+        let descriptor = "wpkh(tpubEBr4i6yk5nf5DAaJpsi9N2pPYBeJ7fZ5Z9rmN4977iYLCGco1VyjB9tvvuvYtfZzjD5A8igzgw3HeWeeKFmanHYqksqZXYXGsw5zjnj7KM9/*)";
+        let descriptors = testutils!(@descriptors (descriptor));
+        let wallet = Wallet::new_offline(
+            &descriptors.0,
+            None,
+            Network::Testnet,
+            MemoryDatabase::new(),
+        )
+        .unwrap();
+
+        let _addresses = wallet
+            .get_batch_addresses(3, AddressIndex::New, KeychainKind::External)
+            .unwrap();
+
+        // use the second address
+        crate::populate_test_db!(
+            wallet.database.borrow_mut(),
+            testutils! (@tx ( (@external descriptors, 1) => 25_000 ) (@confirmations 1)),
+            Some(100),
+        );
+
+        assert_eq!(
+            wallet
+                .get_batch_addresses(3, LastUnused, KeychainKind::External)
+                .unwrap(),
+            vec![
+                AddressInfo {
+                    index: 2,
+                    address: Address::from_str("tb1qzntf2mqex4ehwkjlfdyy3ewdlk08qkvkvrz7x2")
+                        .unwrap(),
+                },
+                AddressInfo {
+                    index: 0,
+                    address: Address::from_str("tb1q6yn66vajcctph75pvylgkksgpp6nq04ppwct9a")
+                        .unwrap(),
+                },
+                AddressInfo {
+                    index: 3,
+                    address: Address::from_str("tb1q32a23q6u3yy89l8svrt80a54h06qvn7gnuvsen")
+                        .unwrap(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_batch_firstunused_address() {
+        let descriptor = "wpkh(tpubEBr4i6yk5nf5DAaJpsi9N2pPYBeJ7fZ5Z9rmN4977iYLCGco1VyjB9tvvuvYtfZzjD5A8igzgw3HeWeeKFmanHYqksqZXYXGsw5zjnj7KM9/*)";
+        let descriptors = testutils!(@descriptors (descriptor));
+        let wallet = Wallet::new_offline(
+            &descriptors.0,
+            None,
+            Network::Testnet,
+            MemoryDatabase::new(),
+        )
+        .unwrap();
+
+        let _addresses = wallet
+            .get_batch_addresses(3, AddressIndex::New, KeychainKind::External)
+            .unwrap();
+
+        // use the second address
+        crate::populate_test_db!(
+            wallet.database.borrow_mut(),
+            testutils! (@tx ( (@external descriptors, 1) => 25_000 ) (@confirmations 1)),
+            Some(100),
+        );
+
+        assert_eq!(
+            wallet
+                .get_batch_addresses(3, FirstUnused, KeychainKind::External)
+                .unwrap(),
+            vec![
+                AddressInfo {
+                    index: 0,
+                    address: Address::from_str("tb1q6yn66vajcctph75pvylgkksgpp6nq04ppwct9a")
+                        .unwrap(),
+                },
+                AddressInfo {
+                    index: 2,
+                    address: Address::from_str("tb1qzntf2mqex4ehwkjlfdyy3ewdlk08qkvkvrz7x2")
+                        .unwrap(),
+                },
+                AddressInfo {
+                    index: 3,
+                    address: Address::from_str("tb1q32a23q6u3yy89l8svrt80a54h06qvn7gnuvsen")
+                        .unwrap(),
+                }
+            ]
         );
     }
 
