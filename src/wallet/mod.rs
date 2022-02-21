@@ -1519,14 +1519,13 @@ where
         database: D,
         client: B,
     ) -> Result<Self, Error> {
-        let current_height = Some(maybe_await!(client.get_height())? as u32);
         Self::_new(
             descriptor,
             change_descriptor,
             network,
             database,
             client,
-            current_height,
+            None,
         )
     }
 
