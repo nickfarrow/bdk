@@ -284,11 +284,11 @@ pub enum BroadcastError {
 /// The reason the backend rejected the transaction we tried to broadcast.
 pub enum BroadcastTxError {
     /// The transaction failed to verify (e.g. it had an invalid signature)
-    #[error("the transaction was rejected by network rules")]
-    VerifyRejected,
+    #[error("the transaction was rejected by network rules ({0})")]
+    VerifyRejected(String),
     /// The transaction was generally invalid (e.g. one of the inputs it is spending from doesn't exist)
-    #[error("there was a general error while verifying the transaction")]
-    VerifyError,
+    #[error("there was a general error while verifying the transaction ({0})")]
+    VerifyError(String),
     /// That transaction has already been confirmed.
     #[error("the transaction has already been broadcast")]
     AlreadyInChain,
@@ -302,6 +302,9 @@ pub enum BroadcastTxError {
     /// The transaction has an input that is missing or spent.
     #[error("the transaction has an input that is missing or spent")]
     MissingOrSpent,
+    /// At least one of the inputs had a witness  or script pubkey that did not satisfy the script pubkey
+    #[error("the witness or scriptsig was invalid for one of the inputs (#{0})")]
+    ScriptPubkeyNotSatisfied(String),
 }
 
 impl BroadcastTxError {
@@ -317,7 +320,7 @@ impl BroadcastTxError {
                         {
                             BroadcastTxError::MissingOrSpent
                         } else {
-                            BroadcastTxError::VerifyError
+                            BroadcastTxError::VerifyError(rpc_error.message)
                         }
                     }
                     -26 => {
@@ -328,8 +331,15 @@ impl BroadcastTxError {
                             BroadcastTxError::PrematureSpendOfCoinbase
                         } else if rpc_error.message.starts_with("txn-mempool-conflict") {
                             BroadcastTxError::ConflictsWithMempool
+                        } else if let Some(remaining) = rpc_error
+                            .message
+                            .strip_prefix("non-mandatory-script-verify-flag")
+                        {
+                            let remaining =
+                                remaining.trim_start_matches(" (").trim_end_matches(")");
+                            BroadcastTxError::ScriptPubkeyNotSatisfied(remaining.into())
                         } else {
-                            BroadcastTxError::VerifyRejected
+                            BroadcastTxError::VerifyRejected(rpc_error.message)
                         }
                     }
                     -27 => BroadcastTxError::AlreadyInChain,

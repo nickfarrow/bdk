@@ -1028,23 +1028,19 @@ macro_rules! bdk_blockchain_tests {
                 let tx = psbt.extract_tx();
                 {
                     let mut tx = tx.clone();
-                    tx.input[0].previous_output = OutPoint { txid: tx.txid(), vout: 0 };
-                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::MissingOrSpent)));
+                    let mut new_witness = tx.input[0].witness.to_vec();
+                    // hose the key
+                    new_witness[1][1] += 1;
+                    tx.input[0].witness = Witness::from_vec(new_witness);
+                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::ScriptPubkeyNotSatisfied("Script failed an OP_EQUALVERIFY operation".into()))));
                 }
                 {
                     let mut tx = tx.clone();
                     // hose the signature
                     let mut new_witness = tx.input[0].witness.to_vec();
-                    new_witness[0][0] += 42;
+                    new_witness[0][20] += 1;
                     tx.input[0].witness = Witness::from_vec(new_witness);
-                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyRejected)));
-                }
-                {
-                    let mut tx = tx.clone();
-                    let mut new_witness = tx.input[0].witness.to_vec();
-                    new_witness[1][0] += 42;
-                    tx.input[0].witness = Witness::from_vec(new_witness);
-                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::VerifyRejected)));
+                    assert_eq!(Broadcast::broadcast(wallet.client(), tx), Err(BroadcastError::Tx(BroadcastTxError::ScriptPubkeyNotSatisfied("Signature must be zero for failed CHECK(MULTI)SIG operation".into()))));
                 }
 
                 Broadcast::broadcast(wallet.client(), tx.clone()).unwrap();
@@ -1062,6 +1058,23 @@ macro_rules! bdk_blockchain_tests {
 
                     assert_eq!(Broadcast::broadcast(wallet.client(), tx2.clone()), Err(BroadcastError::Tx(BroadcastTxError::ConflictsWithMempool)));
                 }
+
+                test_client.generate(1, None);
+
+                {
+                    let tx2 = {
+                        let mut builder = wallet.build_tx();
+                        builder.add_utxo(tx.input[0].previous_output).unwrap();
+                        builder.add_recipient(node_addr.script_pubkey(), 30_000);
+                        let (mut psbt, _details) = builder.finish().unwrap();
+                        let finalized = wallet.sign(&mut psbt, Default::default()).unwrap();
+                        assert!(finalized, "Cannot finalize transaction");
+                        psbt.extract_tx()
+                    };
+
+                    assert_eq!(Broadcast::broadcast(wallet.client(), tx2.clone()), Err(BroadcastError::Tx(BroadcastTxError::MissingOrSpent)));
+                }
+
             }
 
             #[test]
