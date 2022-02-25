@@ -65,6 +65,7 @@ use miniscript::psbt::PsbtInputSatisfier;
 
 /// Raw public key or extended key fingerprint
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct PkOrF {
     // #[serde(skip_serializing_if = "Option::is_none")]
     pubkey: Option<SinglePubKey>,
