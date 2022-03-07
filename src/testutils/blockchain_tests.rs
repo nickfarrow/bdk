@@ -348,7 +348,7 @@ macro_rules! bdk_blockchain_tests {
      fn $_fn_name:ident ( $( $test_client:ident : &TestClient )? $(,)? ) -> $blockchain:ty $block:block) => {
         #[cfg(test)]
         mod bdk_blockchain_tests {
-            use $crate::bitcoin::Network;
+            use $crate::bitcoin::{Network, Address};
             use $crate::testutils::blockchain_tests::TestClient;
             use $crate::blockchain::noop_progress;
             use $crate::database::MemoryDatabase;
@@ -356,6 +356,8 @@ macro_rules! bdk_blockchain_tests {
             use $crate::{Wallet, FeeRate};
             use $crate::testutils;
             use $crate::blockchain::*;
+            use $crate::wallet::AddressIndex;
+            use core::str::FromStr;
             #[allow(unused_imports)]
             use super::*;
 
@@ -630,6 +632,7 @@ macro_rules! bdk_blockchain_tests {
 
                 let mut builder = wallet.build_tx();
                 builder.add_recipient(node_addr.script_pubkey(), 25_000);
+                builder.add_recipient(wallet.get_address(AddressIndex::New).unwrap().script_pubkey(), 10_000);
                 let (mut psbt, details) = builder.finish().unwrap();
                 let finalized = wallet.sign(&mut psbt, Default::default()).unwrap();
                 assert!(finalized, "Cannot finalize transaction");
@@ -637,10 +640,11 @@ macro_rules! bdk_blockchain_tests {
                 println!("{}", bitcoin::consensus::encode::serialize_hex(&tx));
                 wallet.broadcast(&tx).unwrap();
                 wallet.sync(noop_progress(), None).unwrap();
+                dbg!(wallet.get_balance().unwrap(), details.received);
                 assert_eq!(wallet.get_balance().unwrap(), details.received, "incorrect balance after send");
 
                 assert_eq!(wallet.list_transactions(false).unwrap().len(), 2, "incorrect number of txs");
-                assert_eq!(wallet.list_unspent().unwrap().len(), 1, "incorrect number of unspents");
+                assert_eq!(wallet.list_unspent().unwrap().len(), 2, "incorrect number of unspents");
             }
 
             /// Send two conflicting transactions to the same address twice in a row.
