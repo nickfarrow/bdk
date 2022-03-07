@@ -905,7 +905,7 @@ impl<Ctx: ScriptContext> ExtractPolicy for Miniscript<DescriptorPublicKey, Ctx> 
 
                 Policy::make_thresh(mapped, threshold)?
             }
-            Terminal::MultiA(_, _) => todo!(),
+            Terminal::MultiA(_, _) => todo!("TR script descriptors not supported yet"),
         })
     }
 }

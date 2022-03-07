@@ -1256,8 +1256,7 @@ where
             .into_iter()
             .map(|utxo| {
                 let weight = self
-                    .get_descriptor_for_script_pubkey(&utxo.txout.script_pubkey)?
-                    .unwrap()
+                    .get_descriptor_for_keychain(KeychainKind::External)
                     .max_satisfaction_weight()
                     .unwrap();
                 Ok((utxo, weight))
@@ -2258,13 +2257,10 @@ pub(crate) mod test {
         let mut builder = wallet.build_tx();
         builder
             .add_recipient(addr.script_pubkey(), 30_000)
-            .sighash(bitcoin::SigHashType::Single);
+            .sighash(SigHashType::Single);
         let (psbt, _) = builder.finish().unwrap();
 
-        assert_eq!(
-            psbt.inputs[0].sighash_type,
-            Some(bitcoin::SigHashType::Single)
-        );
+        assert_eq!(psbt.inputs[0].sighash_type, Some(SigHashType::Single));
     }
 
     #[test]
@@ -2569,9 +2565,7 @@ pub(crate) mod test {
         let addr = Address::from_str("2N1Ffz3WaNzbeLFBb51xyFMHYSEUXcbiSoX").unwrap();
         let utxo = wallet2.list_unspent().unwrap().remove(0);
         let foreign_utxo_satisfaction = wallet2
-            .get_descriptor_for_script_pubkey(&utxo.txout.script_pubkey)
-            .unwrap()
-            .unwrap()
+            .get_descriptor_for_keychain(KeychainKind::External)
             .max_satisfaction_weight()
             .unwrap();
 

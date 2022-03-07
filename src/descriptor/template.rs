@@ -169,7 +169,32 @@ impl<K: IntoDescriptorKey<Segwitv0>> DescriptorTemplate for P2Wpkh<K> {
     }
 }
 
-/// TODO
+///  Taproot template. Expands to a descriptor `tr(key)`
+///
+/// ## Example
+///
+/// ```
+/// # use bdk::bitcoin::{PrivateKey, Network};
+/// # use bdk::{Wallet};
+/// # use bdk::database::MemoryDatabase;
+/// # use bdk::wallet::AddressIndex::New;
+/// use bdk::template::Tr;
+///
+/// let key =
+///     bitcoin::PrivateKey::from_wif("cTc4vURSzdx6QE6KVynWGomDbLaA75dNALMNyfjh3p8DRRar84Um")?;
+/// let wallet = Wallet::new_offline(
+///     Tr(key),
+///     None,
+///     Network::Testnet,
+///     MemoryDatabase::default(),
+/// )?;
+///
+/// assert_eq!(
+///     wallet.get_address(New)?.to_string(),
+///     "tb1pvjf9t34fznr53u5tqhejz4nr69luzkhlvsdsdfq9pglutrpve2xq7hps46"
+/// );
+/// # Ok::<_, Box<dyn std::error::Error>>(())
+/// ```
 pub struct Tr<K: IntoDescriptorKey<Tap>>(pub K);
 
 impl<K: IntoDescriptorKey<Tap>> DescriptorTemplate for Tr<K> {
@@ -415,7 +440,7 @@ impl<K: DerivableKey<Segwitv0>> DescriptorTemplate for Bip84Public<K> {
     }
 }
 
-/// TODO
+/// BIP86 template
 pub struct Bip86<K: DerivableKey<Tap>>(pub K, pub KeychainKind);
 
 impl<K: DerivableKey<Tap>> DescriptorTemplate for Bip86<K> {
@@ -424,7 +449,7 @@ impl<K: DerivableKey<Tap>> DescriptorTemplate for Bip86<K> {
     }
 }
 
-/// TODO
+/// BIP86 public template
 pub struct Bip86Public<K: DerivableKey<Tap>>(pub K, pub bip32::Fingerprint, pub KeychainKind);
 
 impl<K: DerivableKey<Tap>> DescriptorTemplate for Bip86Public<K> {
@@ -462,7 +487,6 @@ macro_rules! expand_make_bipxx {
                 Ok((key, derivation_path))
             }
 
-            #[allow(dead_code)]
             pub(super) fn make_bipxx_public<K: DerivableKey<$ctx>>(
                 bip: u32,
                 key: K,
