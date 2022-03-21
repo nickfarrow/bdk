@@ -191,7 +191,7 @@ impl<Ctx: ScriptContext + 'static> ExtScriptContext for Ctx {
 ///
 /// ```
 /// use bdk::bitcoin::PublicKey;
-///
+/// use bdk::miniscript::descriptor::SinglePubKey;
 /// use bdk::keys::{DescriptorKey, IntoDescriptorKey, KeyError, ScriptContext};
 ///
 /// pub struct MyKeyType {
@@ -209,7 +209,7 @@ impl<Ctx: ScriptContext + 'static> ExtScriptContext for Ctx {
 ///
 /// ```
 /// use bdk::bitcoin::PublicKey;
-///
+/// use bdk::miniscript::descriptor::SinglePubKey;
 /// use bdk::keys::{
 ///     mainnet_network, DescriptorKey, DescriptorPublicKey, DescriptorSinglePub,
 ///     IntoDescriptorKey, KeyError, ScriptContext,
@@ -224,7 +224,7 @@ impl<Ctx: ScriptContext + 'static> ExtScriptContext for Ctx {
 ///         Ok(DescriptorKey::from_public(
 ///             DescriptorPublicKey::SinglePub(DescriptorSinglePub {
 ///                 origin: None,
-///                 key: self.pubkey,
+///                 key: SinglePubKey::FullKey(self.pubkey),
 ///             }),
 ///             mainnet_network(),
 ///         ))
