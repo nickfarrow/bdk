@@ -1009,7 +1009,6 @@ where
         }
     }
 
-
     /// get the signers
     pub fn signers(&self) -> (&SignersContainer, &SignersContainer) {
         (self.signers.as_ref(), self.change_signers.as_ref())
