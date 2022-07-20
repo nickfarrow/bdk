@@ -260,63 +260,33 @@ where
             .map_err(|_| Error::ScriptDoesntHaveAddressForm)
     }
 
-    // Return whether this address has been used in a transaction
-    fn has_script_been_used(&self, script_pk: &Script) -> bool {
-        let txns = self.list_transactions(true).unwrap_or_else(|_| vec![]);
-        txns.iter()
-            .flat_map(|tx_details| tx_details.transaction.as_ref())
-            .flat_map(|tx| tx.output.iter())
-            .any(|o| o.script_pubkey == *script_pk)
-    }
-
     // Return the the last previously derived address for `keychain` if it has not been used in a
     // received transaction. Otherwise return a new address using [`Wallet::get_new_address`].
     fn get_last_unused_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
-        let unused_address_indexes = self.get_unused_address_indexes(keychain)?;
-        let last_unused_address_index = unused_address_indexes.iter().next_back();
-        match last_unused_address_index {
-            Some(index) => {
-                if *index == self.fetch_index(keychain)? as usize {
-                    self.get_descriptor_for_keychain(keychain)
-                        .as_derived(*index as u32, &self.secp)
-                        .address(self.network)
-                        .map(|address| AddressInfo {
-                            address,
-                            index: *index as u32,
-                            keychain,
-                        })
-                        .map_err(|_| Error::ScriptDoesntHaveAddressForm)
-                } else {
-                    self.get_new_address(keychain)
-                }
-            }
-            None => self.get_new_address(keychain),
+        let unused_script_indexes = self.get_unused_script_indexes(keychain)?;
+        let current_index = &self.fetch_index(keychain)?;
+        if unused_script_indexes.contains(current_index) {
+            self.get_descriptor_for_keychain(keychain)
+                .as_derived(*current_index as u32, &self.secp)
+                .address(self.network)
+                .map(|address| AddressInfo {
+                    address,
+                    index: *current_index as u32,
+                    keychain,
+                })
+                .map_err(|_| Error::ScriptDoesntHaveAddressForm)
+        } else {
+            self.get_new_address(keychain)
         }
     }
 
-    // Return the the first address in the keychain which has not been used ina recieved transaction
+    // Return the the first address in the keychain which has not been used in a recieved transaction
     // If they have all been used, return a new address using [`Wallet::get_new_address`].
     fn get_first_unused_address(&self, keychain: KeychainKind) -> Result<AddressInfo, Error> {
-        let unused_address_indexes = self.get_unused_address_indexes(keychain)?;
-        let first_unused_address_index = unused_address_indexes.iter().next();
-        match first_unused_address_index {
-            Some(index) => {
-                if *index == self.fetch_index(keychain)? as usize {
-                    self.get_descriptor_for_keychain(keychain)
-                        .as_derived(*index as u32, &self.secp)
-                        .address(self.network)
-                        .map(|address| AddressInfo {
-                            address,
-                            index: *index as u32,
-                            keychain,
-                        })
-                        .map_err(|_| Error::ScriptDoesntHaveAddressForm)
-                } else {
-                    self.get_new_address(keychain)
-                }
-            }
-            None => self.get_new_address(keychain),
-        }
+        self.get_unused_script_indexes(keychain)?
+            .get(0)
+            .map(|index| self.get_address(AddressIndex::Peek(*index)))
+            .unwrap_or_else(|| self.get_new_address(keychain))
     }
 
     // Return derived address for the descriptor of given [`KeychainKind`] at a specific index
@@ -424,25 +394,32 @@ where
         Ok(new_addresses_cached)
     }
 
-    /// Return vector of unused address indexes from the [`KeychainKind`].
-    /// The unused addresses returned are in order of oldest in keychain first, with increasing index.
-    pub fn get_unused_address_indexes(&self, keychain: KeychainKind) -> Result<Vec<usize>, Error> {
+    /// Return set of unused script indexes for the [`KeychainKind`].
+    pub fn get_unused_script_indexes(&self, keychain: KeychainKind) -> Result<Vec<u32>, Error> {
         let script_pubkeys = self
             .database
             .borrow()
             .iter_script_pubkeys(Some(keychain))
             .unwrap_or_else(|_| vec![]);
         let current_address_index = self.fetch_index(keychain)? as usize;
+        let txns = self.list_transactions(true).unwrap_or_else(|_| vec![]);
 
-        Ok((0..=current_address_index)
-            .filter_map(|i| {
-                if (i < script_pubkeys.len()) && (self.has_script_been_used(&script_pubkeys[i])) {
-                    None
-                } else {
-                    Some(i)
-                }
-            })
-            .collect())
+        let mut scripts_not_used = vec![]; //HashSet::new();
+        for i in 0..=current_address_index {
+            if (i < script_pubkeys.len())
+                && ({
+                    // check whether script i has been used
+                    txns.iter()
+                        .flat_map(|tx_details| tx_details.transaction.as_ref())
+                        .flat_map(|tx| tx.output.iter())
+                        .any(|o| o.script_pubkey == script_pubkeys[i])
+                })
+            {
+            } else {
+                scripts_not_used.push(i as u32);
+            }
+        }
+        Ok(scripts_not_used.into_iter().collect())
     }
 
     /// Return whether or not a `script` is part of this wallet (either internal or external)
@@ -3972,7 +3949,7 @@ pub(crate) mod test {
 
         assert_eq!(
             wallet
-                .get_unused_address_indexes(KeychainKind::External)
+                .get_unused_script_indexes(KeychainKind::External)
                 .unwrap(),
             vec![0]
         );
@@ -3983,7 +3960,7 @@ pub(crate) mod test {
         }
         assert_eq!(
             wallet
-                .get_unused_address_indexes(KeychainKind::External)
+                .get_unused_script_indexes(KeychainKind::External)
                 .unwrap(),
             vec![0, 1, 2, 3, 4]
         );
@@ -4001,7 +3978,7 @@ pub(crate) mod test {
         );
         assert_eq!(
             wallet
-                .get_unused_address_indexes(KeychainKind::External)
+                .get_unused_script_indexes(KeychainKind::External)
                 .unwrap(),
             vec![0, 2, 3]
         );
@@ -4014,7 +3991,7 @@ pub(crate) mod test {
         );
         assert_eq!(
             wallet
-                .get_unused_address_indexes(KeychainKind::External)
+                .get_unused_script_indexes(KeychainKind::External)
                 .unwrap(),
             vec![2, 3]
         );
