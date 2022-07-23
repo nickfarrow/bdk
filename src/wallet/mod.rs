@@ -404,17 +404,16 @@ where
         let current_address_index = self.fetch_index(keychain)? as usize;
         let txns = self.list_transactions(true).unwrap_or_else(|_| vec![]);
 
-        let mut scripts_not_used = vec![]; //HashSet::new();
+        let txn_scripts: HashSet<Script> = txns
+            .iter()
+            .flat_map(|tx_details| tx_details.transaction.as_ref())
+            .flat_map(|tx| tx.output.iter())
+            .map(|o| o.script_pubkey.clone())
+            .collect();
+
+        let mut scripts_not_used = vec![];
         for i in 0..=current_address_index {
-            if (i < script_pubkeys.len())
-                && ({
-                    // check whether script i has been used
-                    txns.iter()
-                        .flat_map(|tx_details| tx_details.transaction.as_ref())
-                        .flat_map(|tx| tx.output.iter())
-                        .any(|o| o.script_pubkey == script_pubkeys[i])
-                })
-            {
+            if (i < script_pubkeys.len()) && txn_scripts.contains(&script_pubkeys[i]) {
             } else {
                 scripts_not_used.push(i as u32);
             }
