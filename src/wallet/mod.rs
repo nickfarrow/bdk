@@ -3905,7 +3905,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_firstunused_address() {
+    fn test_first_unused_address() {
         let descriptor = "wpkh(tpubEBr4i6yk5nf5DAaJpsi9N2pPYBeJ7fZ5Z9rmN4977iYLCGco1VyjB9tvvuvYtfZzjD5A8igzgw3HeWeeKFmanHYqksqZXYXGsw5zjnj7KM9/*)";
         let descriptors = testutils!(@descriptors (descriptor));
         let wallet = Wallet::new(
@@ -3925,6 +3925,18 @@ pub(crate) mod test {
         crate::populate_test_db!(
             wallet.database.borrow_mut(),
             testutils! (@tx ( (@external descriptors, 0) => 25_000 ) (@confirmations 1)),
+            Some(100),
+        );
+
+        assert_eq!(
+            wallet.get_address(FirstUnused).unwrap().to_string(),
+            "tb1q4er7kxx6sssz3q7qp7zsqsdx4erceahhax77d7"
+        );
+
+        // use the third address
+        crate::populate_test_db!(
+            wallet.database.borrow_mut(),
+            testutils! (@tx ( (@external descriptors, 2) => 25_000 ) (@confirmations 1)),
             Some(100),
         );
 
