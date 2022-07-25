@@ -266,15 +266,7 @@ where
         let unused_script_indexes = self.get_unused_script_indexes(keychain)?;
         let current_index = &self.fetch_index(keychain)?;
         if unused_script_indexes.contains(current_index) {
-            self.get_descriptor_for_keychain(keychain)
-                .as_derived(*current_index as u32, &self.secp)
-                .address(self.network)
-                .map(|address| AddressInfo {
-                    address,
-                    index: *current_index as u32,
-                    keychain,
-                })
-                .map_err(|_| Error::ScriptDoesntHaveAddressForm)
+            self.get_address(AddressIndex::Peek(*current_index))
         } else {
             self.get_new_address(keychain)
         }
@@ -401,24 +393,32 @@ where
             .borrow()
             .iter_script_pubkeys(Some(keychain))
             .unwrap_or_else(|_| vec![]);
-        let current_address_index = self.fetch_index(keychain)? as usize;
-        let txns = self.list_transactions(true).unwrap_or_else(|_| vec![]);
-
-        let txn_scripts: HashSet<Script> = txns
+        let txs = self.list_transactions(true).unwrap_or_else(|_| vec![]);
+        let tx_scripts: HashSet<&Script> = txs
             .iter()
             .flat_map(|tx_details| tx_details.transaction.as_ref())
             .flat_map(|tx| tx.output.iter())
-            .map(|o| o.script_pubkey.clone())
+            .map(|o| &o.script_pubkey)
             .collect();
+        let current_address_index = self.fetch_index(keychain)? as usize;
 
-        let mut scripts_not_used = vec![];
-        for i in 0..=current_address_index {
-            if (i < script_pubkeys.len()) && txn_scripts.contains(&script_pubkeys[i]) {
-            } else {
-                scripts_not_used.push(i as u32);
-            }
+        let mut scripts_not_used: Vec<u32> = script_pubkeys
+            .iter()
+            .take(current_address_index + 1)
+            .enumerate()
+            .filter_map(|(i, script_pubkey)| {
+                if !tx_scripts.contains(script_pubkey) {
+                    Some(i as u32)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if script_pubkeys.len() == 0 {
+            scripts_not_used.push(0);
         }
-        Ok(scripts_not_used.into_iter().collect())
+
+        Ok(scripts_not_used)
     }
 
     /// Return whether or not a `script` is part of this wallet (either internal or external)
