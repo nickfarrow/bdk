@@ -414,7 +414,7 @@ where
                 }
             })
             .collect();
-        if script_pubkeys.len() == 0 {
+        if script_pubkeys.is_empty() {
             scripts_not_used.push(0);
         }
 
